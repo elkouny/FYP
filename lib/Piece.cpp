@@ -1,10 +1,5 @@
 #include "XYpos.h"
-
-enum Color {
-    Black,
-    White,
-    Blank
-};
+#include "Piece.h"
 
 class Piece {
 public:
