@@ -1,28 +1,15 @@
-#include <cassert>
-#include <iostream>
-#include <string>
+#include "XYpos.h"
 
-enum class Index
-{
-    a = 1,
-    b = 2,
-    c = 3,
-    d = 4,
-    e = 5,
-    f = 6,
-    g = 7,
-    h = 8,
-};
 Index operator-(Index a, Index b)
 {
     int result = int(a) - int(b);
-    assert(("subraction out of bounds", result >= 1 && result <= 8));
+    assert(("subtraction out of bounds", result >= 1 && result <= 8));
     return static_cast<Index>(result);
 }
 Index operator-(Index a, int b)
 {
     int result = int(a) - b;
-    assert(("subraction out of bounds", result >= 1 && result <= 8));
+    assert(("subtraction out of bounds", result >= 1 && result <= 8));
     return static_cast<Index>(result);
 }
 
@@ -68,10 +55,31 @@ public:
     {
         return XYPos(this->x - other.x, this->y - other.y);
     }
-
-    std::string toString(){
-        return;
+    
+    XYPos operator*(const int & other){
+        return XYPos(this->x * other , this->y*other)
     }
-
+    
+    //Used for hashing
+    bool operator==(const XYPos & other) {
+        return this->x == other.x && this->y == other.y
+    }
+    
+    //used for printing
+    friend std::ostream& operator<<(std::ostream & os , const XYPos &xy ){
+        os << "XYPos object object : x = " << xy.x << ", y = " <<xy.y; 
+        return os;
+    }
     ~XYPos();
 };
+
+template<>
+namespace std {
+    struct hash<XYPos>{
+        std::size_t operator() (const XYPos& xy) {
+            std::size_t h1 = std::hash<int>()(xy.x);
+            std::size_t h2 = std::hash<int>()(xy.y);
+            return h1 ^ (h2 << 1);
+        }
+    }
+}
