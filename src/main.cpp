@@ -1,25 +1,25 @@
 #include <SPI.h>
 #include <MFRC522.h>
 #include <Wire.h>
+#include <Arduino.h>
 #define RST_PIN 9 // Reset pin
+// #define DEBUG 
+#define UNUSED_PIN UINT8_MAX
 #define SS_PIN 10 // Slave select pin
 #define SER 4     // serial data to the shift register
-#define RCLK 3    // Register Clock , this sends the data of the shift registers to the output on falling edge
-#define SRCLK 2   // Shift Register Clock
+#define CLK 3     // Shift Register Clock
+#define CLR 2     // Clear the registers active low
 unsigned long totalTime = 0;
 unsigned long startTime;
 unsigned long iterationCount = 0;
-MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
+MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 // Send bit to the storage register
 void sendBit(int val)
 {
   digitalWrite(SER, val);
-  delayMicroseconds(10);
-  digitalWrite(SRCLK, LOW);
-  delayMicroseconds(10);
-  digitalWrite(SRCLK, HIGH);
-  delayMicroseconds(10);
+  digitalWrite(CLK, LOW);
+  digitalWrite(CLK, HIGH);
 }
 
 void printBinary(uint8_t value)
@@ -50,43 +50,71 @@ void sendByte(uint8_t val, int order)
   }
 }
 
-void sendToRegisterOutput()
-{
-  digitalWrite(RCLK, LOW);
-  delayMicroseconds(10);
-  digitalWrite(RCLK, HIGH);
-  delayMicroseconds(10);
-}
-
 void clearRegisters()
 {
   sendByte(0b00000000, MSBFIRST);
-  sendToRegisterOutput();
 }
 
 void setup()
 {
   Serial.begin(9600); // Initialize serial communication
-  pinMode(RCLK, OUTPUT);
-  pinMode(SRCLK, OUTPUT);
+  pinMode(CLK, OUTPUT);
   pinMode(SER, OUTPUT);
+  pinMode(CLR, OUTPUT);
+  digitalWrite(CLR, HIGH);
   sendByte(0, MSBFIRST); // Clear Registers
-  sendToRegisterOutput();
   while (!Serial)
-    ;                 // Wait for serial connection
-  SPI.begin();        // Init SPI bus
-  mfrc522.PCD_Init(); // Init MFRC522
+    ; // Wait for serial connection
+  // mfrc522.PCD_Init();
+  SPI.begin();
+
   Serial.print("Ready to scan ! ");
 }
 
 uint8_t state = 0;
+uint8_t numReaders = 6;
 void loop()
 {
-  startTime = millis(); // Record the start time of the iteration
-  // Look for new cards
-  sendByte((1 << (state + 3)), MSBFIRST); // active HIGH
-  sendToRegisterOutput();
+#ifdef DEBUG
+  Serial.println("\n--------------------------------------");
+  Serial.print("Current reader is : ");
+  Serial.println(state);
+  Serial.println("Press SPACEBAR to continue...");
+
+  // Wait for spacebar input
+  while (Serial.available() == 0)
+    ; // Wait for input
+
+  char input = Serial.read();
+  if (input != ' ')
+    return; // Ignore input unless it's a space (' ')
+
+  Serial.println("Resuming...");
   mfrc522.PCD_Init();
+  delay(10);
+  Serial.println(F("*****************************"));
+  Serial.println(F("MFRC522 Digital self test"));
+  Serial.println(F("*****************************"));
+  mfrc522.PCD_DumpVersionToSerial(); // Show version of PCD - MFRC522 Card Reader
+  Serial.println(F("-----------------------------"));
+  Serial.println(F("Only known versions supported"));
+  Serial.println(F("-----------------------------"));
+  Serial.println(F("Performing test..."));
+  bool result = mfrc522.PCD_PerformSelfTest(); // perform the test
+  Serial.println(F("-----------------------------"));
+  Serial.print(F("Result: "));
+  if (result)
+    Serial.println(F("OK"));
+  else
+    Serial.println(F("DEFECT or UNKNOWN"));
+  Serial.println();
+#endif
+  startTime = millis();
+  uint8_t val = 1;
+  sendByte((val << state), MSBFIRST);
+  delay(10);
+  mfrc522.PCD_Init();
+  delay(10);
   if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial())
   {
     Serial.print("Reader Index : ");
@@ -97,9 +125,9 @@ void loop()
       Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "); // This is for fomatting eg 5 --> 05;
       Serial.print(mfrc522.uid.uidByte[i], HEX);
     }
+    Serial.println();
   }
-
-  // Update total time and iteration count
+  state = (state + 1) % numReaders;
 
   totalTime += (millis() - startTime);
   iterationCount++;
@@ -113,6 +141,4 @@ void loop()
     totalTime = 0;      // Reset total time
     iterationCount = 0; // Reset iteration count
   }
-  // Halt PICC
-  state = (state + 1) % 4;
 }
