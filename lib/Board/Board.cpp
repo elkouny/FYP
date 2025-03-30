@@ -56,18 +56,6 @@ private:
         this->coordinateToPiece[xyPos] = p;
     }
 
-    std::optional<Piece> getPiece(const XYPos &xyPos) const
-    {
-        if (this->coordinateToPiece.count(xyPos))
-        {
-            return this->coordinateToPiece.at(xyPos);
-        }
-        else
-        {
-            return std::nullopt; // No piece at this position
-        }
-    }
-
     XYPos getKingPosition(Color &color)
     {
         if (color == Color::Black)
@@ -118,7 +106,7 @@ public:
             }
         }
     }
-    std::set<XYPos> slidingMoves(XYPos &currentPosition, XYPos &moveVector)
+    std::set<XYPos> slidingMoves(XYPos &currentPosition,const XYPos &moveVector)
     {
         Piece piece = this->coordinateToPiece[currentPosition];
         std::set<XYPos> moves;
@@ -129,7 +117,7 @@ public:
                 return moves; // out of bounds
             if (this->coordinateToPiece.count(potentialPosition) == 0)
             {
-                moves.insert(potentialPosition); // blank square, valide and move
+                moves.insert(potentialPosition); // blank square, valid and move
             }
             else if (this->coordinateToPiece[potentialPosition].color != piece.color)
             {
@@ -159,7 +147,8 @@ public:
                 moveVector = XYPos(move);
                 slidingMovesSet = this->slidingMoves(currentPosition, moveVector);
                 moves.insert(slidingMovesSet.begin(), slidingMovesSet.end());
-                slidingMovesSet = this->slidingMoves(currentPosition, moveVector * -1);
+                XYPos negativeMoveVector = moveVector * -1;
+                slidingMovesSet = this->slidingMoves(currentPosition, negativeMoveVector * -1);
                 moves.insert(slidingMovesSet.begin(), slidingMovesSet.end());
             }
         }
@@ -298,7 +287,18 @@ public:
                     pawn.movedTwice = true;
                 }
             }
-            updatePiece(piece,finalPosition);
+            updatePiece(piece, finalPosition);
+        }
+    }
+    std::optional<Piece> getPiece(const XYPos &xyPos) const
+    {
+        if (this->coordinateToPiece.count(xyPos))
+        {
+            return this->coordinateToPiece.at(xyPos);
+        }
+        else
+        {
+            return std::nullopt; // No piece at this position
         }
     }
 };

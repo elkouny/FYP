@@ -1,6 +1,3 @@
-//
-// Created by Ahmed Elkouny on 28/01/2025.
-//
 #ifndef XY_POS_H
 #define XY_POS_H
 
@@ -12,24 +9,13 @@
 // Enum class to represent index values
 enum class Index
 {
-    a = 1,
-    b = 2,
-    c = 3,
-    d = 4,
-    e = 5,
-    f = 6,
-    g = 7,
-    h = 8,
+    a = 1, b, c, d, e, f, g, h
 };
 
-// Operator overloading for subtraction
+// Operator overloading for Index
 Index operator-(Index a, Index b);
-
 Index operator-(Index a, int b);
-
-// Operator overloading for addition
 Index operator+(Index a, Index b);
-
 Index operator+(Index a, int b);
 
 // Class to represent XY position
@@ -40,40 +26,32 @@ public:
     int y;
 
     // Constructors
-    XYPos(int x, int y);
-
     XYPos();
-
+    XYPos(int x, int y);
     XYPos(Index x, int y);
-
-    XYPos(std::array<int, 2> xy);
+    XYPos(std::array<int, 2> &xy);
 
     // Operator overloads
-    XYPos operator+(XYPos &other);
+    XYPos operator+(const XYPos &other) const;
+    XYPos operator-(const XYPos &other) const;
+    XYPos operator*(int other) const;
+    friend XYPos operator*(int lhs, const XYPos &rhs);
+    bool operator==(const XYPos &other) const;
 
-    XYPos operator-(XYPos &other);
-
-    XYPos operator*(int &other);
-
-    friend XYPos operator*(int &lhs, XYPos &rhs);
-
-    // Equality check for hashing
-    bool operator==(XYPos &other);
-
-    // Used for printing XYPos objects
-    friend std::ostream &operator<<(std::ostream &os, XYPos &xy);
+    // Printing support
+    friend std::ostream &operator<<(std::ostream &os, const XYPos &xy);
 
     // Destructor
     ~XYPos();
 };
 
-// Specialization of std::hash for XYPos to enable hashing
+// Specialization of std::hash for XYPos
 namespace std
 {
     template <>
     struct hash<XYPos>
     {
-        std::size_t operator()(XYPos &xy);
+        std::size_t operator()(const XYPos &xy) const;
     };
 }
 

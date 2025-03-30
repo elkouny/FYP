@@ -3,7 +3,7 @@
 #include <Wire.h>
 #include <Arduino.h>
 #define RST_PIN 9 // Reset pin
-// #define DEBUG 
+// #define DEBUG
 #define UNUSED_PIN UINT8_MAX
 #define SS_PIN 10 // Slave select pin
 #define SER 4     // serial data to the shift register
@@ -50,9 +50,23 @@ void sendByte(uint8_t val, int order)
   }
 }
 
+void activateReader(int readerIndex)
+{
+  sendByte(1 << (readerIndex % 8), MSBFIRST);
+  readerIndex -= 8;
+  while (readerIndex >= 0)
+  {
+    sendByte(0, MSBFIRST);
+    readerIndex -= 8;
+  }
+}
+
 void clearRegisters()
 {
-  sendByte(0b00000000, MSBFIRST);
+  digitalWrite(CLR, LOW);
+  delayMicroseconds(10);
+  digitalWrite(CLR, HIGH);
+  delayMicroseconds(10);
 }
 
 void setup()
@@ -62,7 +76,7 @@ void setup()
   pinMode(SER, OUTPUT);
   pinMode(CLR, OUTPUT);
   digitalWrite(CLR, HIGH);
-  sendByte(0, MSBFIRST); // Clear Registers
+  clearRegisters();
   while (!Serial)
     ; // Wait for serial connection
   // mfrc522.PCD_Init();
@@ -71,11 +85,14 @@ void setup()
   Serial.print("Ready to scan ! ");
 }
 
-uint8_t state = 0;
-uint8_t numReaders = 6;
+int state = 0;
+int numReaders = 64;
+int val = 1;
 void loop()
 {
 #ifdef DEBUG
+  sendByte((val << state), MSBFIRST);
+  delayMicroseconds(10);
   Serial.println("\n--------------------------------------");
   Serial.print("Current reader is : ");
   Serial.println(state);
@@ -106,15 +123,24 @@ void loop()
   if (result)
     Serial.println(F("OK"));
   else
+  {
     Serial.println(F("DEFECT or UNKNOWN"));
+    clearRegisters();
+    delayMicroseconds(10);
+    sendByte((val << state), MSBFIRST);
+    delayMicroseconds(10);
+  }
   Serial.println();
-#endif
-  startTime = millis();
-  uint8_t val = 1;
-  sendByte((val << state), MSBFIRST);
-  delay(10);
   mfrc522.PCD_Init();
   delay(10);
+#endif
+  startTime = millis();
+  clearRegisters();
+  activateReader(state);
+  // sendByte(1,MSBFIRST);
+  delayMicroseconds(100);
+  mfrc522.PCD_Init();
+  delayMicroseconds(100);
   if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial())
   {
     Serial.print("Reader Index : ");

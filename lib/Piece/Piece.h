@@ -1,12 +1,12 @@
 #ifndef PIECE_H
 #define PIECE_H
 
-#include <XYpos.h>
+#include <XYPos.h>
 #include <array>
 #include <vector>
 #include <string>
 #include <iostream>
-#include <functional> 
+#include <functional>
 
 enum Color
 {
@@ -21,7 +21,7 @@ public:
     Index index;
     bool moved;
     std::string name;
-
+    Piece() = default;
     Piece(Color _color, Index _index);
 
     virtual ~Piece() = default;
