@@ -2,303 +2,190 @@
 // Created by Ahmed Elkouny on 28/01/2025.
 //
 
-#include <unordered_map>
-#include <set>
+#include "Board.h"
+#include <Constants.h>
 #include <Piece.h>
 #include <XYPos.h>
 #include <algorithm>
-#include <Constants.h>
 #include <optional>
+#include <set>
+#include <unordered_map>
 
-using PieceFactory = std::function<Piece(Color, Index)>;
+using PieceFactory = std::function<std::shared_ptr<Piece>(Color, Index)>;
 std::vector<PieceFactory> piecesInOrder = {
-    [](Color c, Index i)
-    { return Castle(c, i); },
-    [](Color c, Index i)
-    { return Knight(c, i); },
-    [](Color c, Index i)
-    { return Bishop(c, i); },
-    [](Color c, Index i)
-    { return Queen(c, i); },
-    [](Color c, Index i)
-    { return King(c, i); },
-    [](Color c, Index i)
-    { return Bishop(c, i); },
-    [](Color c, Index i)
-    { return Knight(c, i); },
-    [](Color c, Index i)
-    { return Castle(c, i); }};
+    [](Color c, Index i) { return std::make_shared<Castle>(c, i); },
+    [](Color c, Index i) { return std::make_shared<Knight>(c, i); },
+    [](Color c, Index i) { return std::make_shared<Bishop>(c, i); },
+    [](Color c, Index i) { return std::make_shared<Queen>(c, i); },
+    [](Color c, Index i) { return std::make_shared<King>(c, i); },
+    [](Color c, Index i) { return std::make_shared<Bishop>(c, i); },
+    [](Color c, Index i) { return std::make_shared<Knight>(c, i); },
+    [](Color c, Index i) { return std::make_shared<Castle>(c, i); }};
 
-class Board
-{
-private:
-    std::unordered_map<Piece, XYPos> pieceToCoordinate = {};
-    std::unordered_map<XYPos, Piece> coordinateToPiece = {};
-    King whiteKing = King(Color::White, Index::e);
-    King blackKing = King(Color::Black, Index::e);
-
-    void updatePiece(Piece &piece, XYPos &newPosition)
-    {
-        XYPos originalPosition = this->pieceToCoordinate[piece];
-        if (this->coordinateToPiece.count(newPosition))
-        {
-            // capturing piece
-            Piece pieceAtNewPosition = this->coordinateToPiece[newPosition];
-            pieceToCoordinate.erase(pieceAtNewPosition);
-        }
-        coordinateToPiece.erase(originalPosition);
-        addToBoard(piece, newPosition);
-    }
-
-    void addToBoard(Piece &p, XYPos &xyPos)
-    {
-        this->pieceToCoordinate[p] = xyPos;
-        this->coordinateToPiece[xyPos] = p;
-    }
-
-    XYPos getKingPosition(Color &color)
-    {
-        if (color == Color::Black)
-        {
-            return this->pieceToCoordinate[blackKing];
-        }
-        else
-        {
-            return this->pieceToCoordinate[whiteKing];
-        }
-    }
-
-    bool isValidPosition(XYPos &xyPos)
-    {
-        return (std::min(int(xyPos.x), xyPos.y) >= 1 && std::max(int(xyPos.x), xyPos.y) <= 8);
-    }
-
-public:
-    Board()
-    {
-        const std::vector<int> ranks = {1, 2, 7, 8};
-        for (int x = MIN_FILE; x <= MAX_FILE; ++x)
-        {
-            for (int y : ranks)
-            {
-                auto xyPos = XYPos(x, y);
-                if (y == 1)
-                {
-                    // Rank 1 of the board
-                    auto piece = piecesInOrder[x - 1](Color::White, static_cast<Index>(x));
-                    addToBoard(piece, xyPos);
-                }
-                else if (y == 2)
-                {
-                    auto piece = Pawn(Color::White, static_cast<Index>(x));
-                    addToBoard(piece, xyPos);
-                }
-                else if (y == 7)
-                {
-                    auto piece = Pawn(Color::Black, static_cast<Index>(x));
-                    addToBoard(piece, xyPos);
-                }
-                else if (y == 8)
-                {
-                    auto piece = piecesInOrder[x - 1](Color::Black, static_cast<Index>(x));
-                    addToBoard(piece, xyPos);
-                }
+Board::Board() {
+    const std::vector<int> ranks = {1, 2, 7, 8};
+    for (int x = MIN_FILE; x <= MAX_FILE; ++x) {
+        for (int y : ranks) {
+            auto xyPos = XYPos(x, y);
+            Index file = static_cast<Index>(x);
+            std::shared_ptr<Piece> piece;
+            if (y == 1)
+                piece = piecesInOrder[x - 1](Color::White, file);
+            else if (y == 2)
+                piece = std::make_shared<Pawn>(Color::White, file);
+            else if (y == 7)
+                piece = std::make_shared<Pawn>(Color::Black, file);
+            else if (y == 8)
+                piece = piecesInOrder[x - 1](Color::Black, file);
+            if (piece) addToBoard(piece, xyPos);
+            if (piece && piece->name == "King") {
+                if (piece->color == Color::White)
+                    whiteKing = std::dynamic_pointer_cast<King>(piece);
+                else
+                    blackKing = std::dynamic_pointer_cast<King>(piece);
             }
         }
     }
-    std::set<XYPos> slidingMoves(XYPos &currentPosition,const XYPos &moveVector)
-    {
-        Piece piece = this->coordinateToPiece[currentPosition];
-        std::set<XYPos> moves;
-        for (int k = MIN_RANK; k < MAX_RANK; ++k)
-        {
-            XYPos potentialPosition = currentPosition + (k * moveVector);
-            if (!isValidPosition(potentialPosition))
-                return moves; // out of bounds
-            if (this->coordinateToPiece.count(potentialPosition) == 0)
-            {
-                moves.insert(potentialPosition); // blank square, valid and move
-            }
-            else if (this->coordinateToPiece[potentialPosition].color != piece.color)
-            {
-                moves.insert(potentialPosition); // capture piece and stop
-                return moves;
-            }
-            else
-            {
-                return moves; // same color
-            }
-        }
-        return moves;
-    }
+}
 
-    std::set<XYPos> pseudoMoves(Piece &piece)
-    {
-        std::set<XYPos> moves;
-        XYPos moveVector;
-        XYPos potentialPosition;
-        std::optional<Piece> pieceAtPotentialPosition;
-        std::set<XYPos> slidingMovesSet;
-        XYPos currentPosition = this->pieceToCoordinate[piece];
-        if (piece.slidingPiece())
-        {
-            for (auto move : piece.movements())
-            {
-                moveVector = XYPos(move);
-                slidingMovesSet = this->slidingMoves(currentPosition, moveVector);
-                moves.insert(slidingMovesSet.begin(), slidingMovesSet.end());
-                XYPos negativeMoveVector = moveVector * -1;
-                slidingMovesSet = this->slidingMoves(currentPosition, negativeMoveVector * -1);
-                moves.insert(slidingMovesSet.begin(), slidingMovesSet.end());
-            }
+void Board::addToBoard(std::shared_ptr<Piece> p, XYPos &xyPos) {
+    pieceToCoordinate[p] = xyPos;
+    coordinateToPiece[xyPos] = p;
+}
+
+void Board::updatePiece(std::shared_ptr<Piece> piece, XYPos &newPosition) {
+    XYPos originalPosition = pieceToCoordinate[piece];
+    if (coordinateToPiece.count(newPosition)) {
+        auto captured = coordinateToPiece[newPosition];
+        pieceToCoordinate.erase(captured);
+    }
+    coordinateToPiece.erase(originalPosition);
+    addToBoard(piece, newPosition);
+}
+
+XYPos Board::getKingPosition(Color color) {
+    return (color == Color::Black) ? pieceToCoordinate[blackKing] : pieceToCoordinate[whiteKing];
+}
+
+bool Board::isValidPosition(XYPos &xyPos) {
+    return (std::min(int(xyPos.x), xyPos.y) >= MIN_FILE && std::max(int(xyPos.x), xyPos.y) <= MAX_FILE);
+}
+
+std::optional<std::shared_ptr<Piece>> Board::getPiece(const XYPos &xyPos) const {
+    if (coordinateToPiece.count(xyPos)) return coordinateToPiece.at(xyPos);
+    return std::nullopt;
+}
+
+std::set<XYPos> Board::slidingMoves(XYPos &currentPosition, const XYPos &moveVector) {
+    auto piece = coordinateToPiece[currentPosition];
+    std::set<XYPos> moves;
+    for (int k = MIN_RANK; k < MAX_RANK; ++k) {
+        XYPos potential = currentPosition + (k * moveVector);
+        if (!isValidPosition(potential)) return moves;
+        if (coordinateToPiece.count(potential) == 0)
+            moves.insert(potential);
+        else if (coordinateToPiece[potential]->color != piece->color) {
+            moves.insert(potential);
+            return moves;
+        } else
+            return moves;
+    }
+    return moves;
+}
+
+std::set<XYPos> Board::pseudoMoves(std::shared_ptr<Piece> piece) {
+    std::set<XYPos> moves;
+    XYPos current = pieceToCoordinate[piece];
+
+    if (piece->slidingPiece()) {
+        for (auto move : piece->movements()) {
+            XYPos mv(move);
+            auto set1 = slidingMoves(current, mv);
+            auto set2 = slidingMoves(current, mv * -1);
+            moves.insert(set1.begin(), set1.end());
+            moves.insert(set2.begin(), set2.end());
         }
-        else
-        {
-            for (std::array<int, 2> move : piece.movements())
-            {
-                moveVector = XYPos(move);
-                potentialPosition = currentPosition + moveVector;
-                pieceAtPotentialPosition = getPiece(potentialPosition);
-                if (!isValidPosition(potentialPosition))
+    } else {
+        for (auto move : piece->movements()) {
+            XYPos mv(move);
+            XYPos potential = current + mv;
+            if (!isValidPosition(potential)) continue; // out of bounds
+            auto atPot = getPiece(potential);
+
+            if (piece->name == "Pawn") {
+                std::shared_ptr<Pawn> pawn = std::dynamic_pointer_cast<Pawn>(piece);
+                bool isWhite = piece->color == Color::White;
+                if ((isWhite && (move == std::array<int, 2>{1, 1} || move == std::array<int, 2>{-1, 1})) ||
+                    (!isWhite && (move == std::array<int, 2>{1, -1} || move == std::array<int, 2>{-1, -1}))) {
+                    XYPos enPassant = isWhite ? XYPos(potential.x, potential.y - 1) : XYPos(potential.x, potential.y + 1);
+                    auto atEnPassant = getPiece(enPassant);
+                    if ((atPot && atPot.value()->color != piece->color) ||
+                        (!atPot && atEnPassant && atEnPassant.value()->name == "Pawn" &&
+                         std::dynamic_pointer_cast<Pawn>(atEnPassant.value())->movedTwice &&
+                         atEnPassant.value()->color != piece->color)) {
+                        moves.insert(potential);
+                    }
                     continue;
-                if (typeid(piece) == typeid(Pawn) && piece.color == Color::White && ((move == std::array<int, 2>({1, 1}) || move == std::array<int, 2>({-1, 1}))))
-                {
-                    // Pawn killing En-Passant or normal
-                    XYPos enPassant = XYPos(potentialPosition.x, potentialPosition.y - 1);
-                    std::optional<Piece> pieceAtEnPassant = getPiece(enPassant);
-                    // Normal killing case
-                    if (pieceAtPotentialPosition.has_value() && pieceAtPotentialPosition->color != piece.color)
-                    {
-                        moves.insert(potentialPosition);
-                    }
-                    else if (!pieceAtPotentialPosition.has_value() && pieceAtEnPassant.has_value() && typeid(*pieceAtEnPassant) == typeid(Pawn))
-                    {
-                        // En-Passant case
-                        Pawn *pawnAtEnPassant = dynamic_cast<Pawn *>(&pieceAtEnPassant.value());
-                        if (pawnAtEnPassant->movedTwice && pawnAtEnPassant->color != piece.color)
-                            moves.insert(potentialPosition);
-                    }
-                }
-                else if (typeid(piece) == typeid(Pawn) && piece.color == Color::Black && ((move == std::array<int, 2>({-1, -1}) || move == std::array<int, 2>({1, -1}))))
-                {
-                    // Pawn killing En-Passant or normal
-                    XYPos enPassant = XYPos(potentialPosition.x, potentialPosition.y + 1);
-                    std::optional<Piece> pieceAtEnPassant = getPiece(enPassant);
-                    // Normal killing case
-                    if (pieceAtPotentialPosition.has_value() && pieceAtPotentialPosition->color != piece.color)
-                    {
-                        moves.insert(potentialPosition);
-                    }
-                    else if (!pieceAtPotentialPosition.has_value() && pieceAtEnPassant.has_value() && typeid(*pieceAtEnPassant) == typeid(Pawn))
-                    {
-                        // En-Passant case
-                        Pawn *pawnAtEnPassant = dynamic_cast<Pawn *>(&pieceAtEnPassant.value());
-                        if (pawnAtEnPassant->movedTwice && pawnAtEnPassant->color != piece.color)
-                            moves.insert(potentialPosition);
-                    }
-                }
-                else if (typeid(piece) == typeid(King) && (move == std::array<int, 2>({-2, 0}) || move == std::array<int, 2>({2, 0})))
-                {
-                    int rank = piece.color == Color::White ? MIN_RANK : MAX_RANK;
-                    if (move[0] == -2)
-                    {
-                        // Far castle
-                        if (!getPiece(XYPos(Index::d, rank)).has_value() && !getPiece(XYPos(Index::c, rank)).has_value() && !getPiece(XYPos(Index::b, rank)).has_value() && !getPiece(XYPos(Index::a, rank)).has_value() &&
-                            typeid(getPiece(XYPos(Index::a, rank))) == typeid(Castle) && !getPiece(XYPos(Index::a, rank))->hasMoved())
-                        {
-                            moves.insert(potentialPosition);
-                        }
-                        else if (!getPiece(XYPos(Index::f, rank)).has_value() && !getPiece(XYPos(Index::g, rank)).has_value() && getPiece(XYPos(Index::h, rank)).has_value() &&
-                                 typeid(getPiece(XYPos(Index::h, rank))) == typeid(Castle) && !getPiece(XYPos(Index::h, rank))->hasMoved())
-                        {
-                            moves.insert(potentialPosition);
-                        }
-                    }
-                }
-                // if blank or opposite color
-                else if (!pieceAtPotentialPosition.has_value() || pieceAtPotentialPosition->color != piece.color)
-                {
-                    moves.insert(potentialPosition);
                 }
             }
-        }
-        return moves;
-    }
-
-    bool isCheck(Color color)
-    {
-        std::vector<Piece> opponents;
-        for (auto pair : this->pieceToCoordinate)
-        {
-            if (pair.first.color != color)
-            {
-                opponents.push_back(pair.first);
-            }
-        }
-        XYPos kingPositon = getKingPosition(color);
-        for (auto opponent : opponents)
-        {
-            if (pseudoMoves(opponent).count(kingPositon))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    bool isKingExposed(Piece piece, XYPos potentialPosition)
-    {
-        std::optional<Piece> pieceAtPotentailPosition = getPiece(potentialPosition);
-        XYPos originalPoition = this->pieceToCoordinate[piece];
-        updatePiece(piece, potentialPosition);
-        bool kingInCheck = isCheck(piece.color);
-        updatePiece(piece, originalPoition);
-        if (pieceAtPotentailPosition.has_value())
-            addToBoard(*pieceAtPotentailPosition, potentialPosition);
-        return kingInCheck;
-    }
-
-    std::set<XYPos> getValidMoves(Piece piece)
-    {
-        std::set<XYPos> moves = pseudoMoves(piece);
-        std::set<XYPos> validMoves;
-        for (auto move : moves)
-        {
-            if (!isKingExposed(piece, move))
-                validMoves.insert(move);
-        }
-        return validMoves;
-    }
-
-    void movePiece(Piece &piece, XYPos &finalPosition)
-    {
-        std::set<XYPos> validMoves = getValidMoves(piece);
-        XYPos initialPosition = this->pieceToCoordinate[piece];
-        XYPos move = finalPosition - initialPosition;
-
-        if (validMoves.count(finalPosition))
-        {
-            piece.moved = true;
-            if (typeid(piece) == typeid(Pawn))
-            {
-                Pawn &pawn = static_cast<Pawn &>(piece);
-                if (std::abs(move.y) == 2)
-                {
-                    pawn.movedTwice = true;
+            if (piece->name == "King" && (move == std::array<int, 2>{-2, 0} || move == std::array<int, 2>{2, 0})) {
+                int rank = piece->color == Color::White ? MIN_RANK : MAX_RANK;
+                if (move[0] == -2) {
+                    if (!getPiece(XYPos(Index::d, rank)) && !getPiece(XYPos(Index::c, rank)) &&
+                        !getPiece(XYPos(Index::b, rank)) && getPiece(XYPos(Index::a, rank))) {
+                        auto rook = getPiece(XYPos(Index::a, rank)).value();
+                        if (rook->name == "Castle" && !rook->hasMoved()) moves.insert(potential);
+                    }
+                } else {
+                    if (!getPiece(XYPos(Index::f, rank)) && !getPiece(XYPos(Index::g, rank)) &&
+                        getPiece(XYPos(Index::h, rank))) {
+                        auto rook = getPiece(XYPos(Index::h, rank)).value();
+                        if (rook->name == "Castle" && !rook->hasMoved()) moves.insert(potential);
+                    }
                 }
+                continue;
             }
-            updatePiece(piece, finalPosition);
+            if (!atPot || atPot.value()->color != piece->color) moves.insert(potential);
         }
     }
-    std::optional<Piece> getPiece(const XYPos &xyPos) const
-    {
-        if (this->coordinateToPiece.count(xyPos))
-        {
-            return this->coordinateToPiece.at(xyPos);
-        }
-        else
-        {
-            return std::nullopt; // No piece at this position
+    return moves;
+}
+
+bool Board::isCheck(Color color) {
+    XYPos kingPos = getKingPosition(color);
+    for (auto &[p, _] : pieceToCoordinate) {
+        if (p->color != color && pseudoMoves(p).count(kingPos)) {
+            return true;
         }
     }
-};
+    return false;
+}
+
+bool Board::isKingExposed(std::shared_ptr<Piece> piece, XYPos potential) {
+    auto original = pieceToCoordinate[piece];
+    auto prevPiece = getPiece(potential);
+    updatePiece(piece, potential);
+    bool exposed = isCheck(piece->color);
+    updatePiece(piece, original);
+    if (prevPiece) addToBoard(prevPiece.value(), potential);
+    return exposed;
+}
+
+std::set<XYPos> Board::getValidMoves(std::shared_ptr<Piece> piece) {
+    std::set<XYPos> result;
+    for (auto move : pseudoMoves(piece)) {
+        if (!isKingExposed(piece, move)) result.insert(move);
+    }
+    return result;
+}
+
+void Board::movePiece(std::shared_ptr<Piece> piece, XYPos &dest) {
+    if (!getValidMoves(piece).count(dest)) return;
+    XYPos origin = pieceToCoordinate[piece];
+    XYPos delta = dest - origin;
+    piece->moved = true;
+    if (piece->name == "Pawn" && std::abs(delta.y) == 2) {
+        std::dynamic_pointer_cast<Pawn>(piece)->movedTwice = true;
+    }
+    updatePiece(piece, dest);
+}

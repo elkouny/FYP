@@ -1,15 +1,21 @@
 #ifndef XY_POS_H
 #define XY_POS_H
 
+#include <array>
 #include <iostream>
 #include <string>
 #include <vector>
-#include <array>
 
 // Enum class to represent index values
-enum class Index
-{
-    a = 1, b, c, d, e, f, g, h
+enum class Index {
+    a = 1,
+    b,
+    c,
+    d,
+    e,
+    f,
+    g,
+    h
 };
 
 // Operator overloading for Index
@@ -19,8 +25,7 @@ Index operator+(Index a, Index b);
 Index operator+(Index a, int b);
 
 // Class to represent XY position
-class XYPos
-{
+class XYPos {
 public:
     Index x;
     int y;
@@ -37,22 +42,21 @@ public:
     XYPos operator*(int other) const;
     friend XYPos operator*(int lhs, const XYPos &rhs);
     bool operator==(const XYPos &other) const;
+    bool operator<(const XYPos &other) const;
+    bool operator>(const XYPos &other) const;
 
     // Printing support
     friend std::ostream &operator<<(std::ostream &os, const XYPos &xy);
 
     // Destructor
-    ~XYPos();
+    ~XYPos() = default;
 };
 
-// Specialization of std::hash for XYPos
-namespace std
-{
-    template <>
-    struct hash<XYPos>
-    {
-        std::size_t operator()(const XYPos &xy) const;
-    };
-}
+namespace std {
+template <>
+struct hash<XYPos> {
+    std::size_t operator()(const XYPos &xy) const;
+};
+} // namespace std
 
 #endif // XY_POS_H

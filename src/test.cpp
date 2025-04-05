@@ -7,5 +7,11 @@
 #define RCLK 7   // Register Clock , this sends the data of the shift registers to the output on falling edge
 #define SER 6     // serial data to the shift register
 
+void setup(){
 
+}
+
+void loop(){
+    Serial.print("Hello");
+}
 

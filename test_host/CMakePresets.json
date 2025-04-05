@@ -1,0 +1,14 @@
+{"version": 3,
+"configurePresets": [
+  {
+    "name": "default",
+    "description": "Cmake for chess engine",
+    "generator": "Unix Makefiles",
+    "hidden": false,
+    "binaryDir": "${sourceDir}/build",
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Debug"
+    }
+  }
+]
+}
