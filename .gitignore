@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 .pio
 .vscode
 .vscode/.browse.c_cpp.db*
@@ -5,3 +6,15 @@
 .vscode/launch.json
 .vscode/ipch
 .DS_Store
+=======
+embedded/.pio
+embedded/.vscode
+embedded/.vscode/.browse.c_cpp.db*
+embedded/.vscode/c_cpp_properties.json
+embedded/.vscode/launch.json
+embedded/.vscode/ipch
+.DS_Store
+embedded/test_host/build/
+embedded/test_host/cmake-build-debug/
+embedded/test_host/.idea/
+>>>>>>> 1705aa2 (refactor to split app and embedded section, BLE implemented)

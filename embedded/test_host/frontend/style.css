@@ -1,0 +1,32 @@
+body {
+    background: #222;
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, 60px);
+    grid-template-rows: repeat(8, 60px);
+    border: 2px solid white;
+  }
+  
+  .square {
+    width: 60px;
+    height: 60px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 28px;
+    cursor: pointer;
+    user-select: none;
+  }
+  
+  .light { background: #f0d9b5; }
+  .dark  { background: #b58863; }
+  .valid { background: #6f6; }
+  .selected { outline: 3px solid yellow; }
+  
