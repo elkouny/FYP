@@ -32,6 +32,7 @@ bool hasNotifiedReady = false;
 bool gameStarted = false;
 // byte to chess id
 BiMap<std::string, XYPos> boardState;
+std::set<std::string> hovering;
 Board board;
 
 // === Pin helpers ===
@@ -106,28 +107,49 @@ void scanBoard() {
             v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
         }
 
-        if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+        if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) { // is there a piece on this square?
             std::string uid = uidToString(mfrc522.uid);
-            if (boardState.containsXYPos(currentPos) && boardState.getFromXYPos(currentPos) != uid) {
-                // capture
-                Serial.println("Piece captured at " + currentPos.toString());
-                boardState.insert(uid, currentPos);
-            } else if (!boardState.containsXYPos(currentPos)) {
+            if (!boardState.containsUid(uid)) {
+                while (true) {
+                    Serial.println("Error please remove this peice from the square it shouldnt be on the board");
+                    bool read = mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial();
+                    if (!read || uid != uidToString(mfrc522.uid)) {
+                        break;
+                    }
+                }
+            } else if (boardState.containsXYPos(currentPos)) {           // was there a piece on this square before?
+                if (boardState.getFromXYPos(currentPos) != uid) {        // did the piece on this square a different uid?
+                    String from = boardState.getFromUid(uid).toString(); // attacker's origin
+                    String to = currentPos.toString();                   // capture destination
+                    String message = "capture:" + from + to;
+                    statusChar->setValue(message.c_str());
+                    statusChar->notify();
+                    Serial.println("Message sent" + message);
+                } else {
+                    // nothing to do the piece was in the same position
+                    if (hovering.count(uid)) {
+                        // if the piece was hovering mark as no longer hovering
+                        hovering.erase(uid);
+                        statusChar->setValue("clear");
+                        statusChar->notify();
+                        Serial.println("Undoing hovering at " + currentPos.toString());
+                    }
+                }
+
+            } else {
                 // move
                 message = "move:" + boardState.getFromUid(uid).toString() + currentPos.toString();
                 statusChar->setValue(message.c_str());
                 statusChar->notify();
-                boardState.eraseByUid(uid);
-                boardState.insert(uid, currentPos);
-                Serial.println(message);
+                Serial.println("Message sent" + message);
             }
-
         } else {
             if (boardState.containsXYPos(currentPos)) {
                 // hover
                 message = "hover:" + currentPos.toString();
                 statusChar->setValue(message.c_str());
                 statusChar->notify();
+                hovering.insert(boardState.getFromXYPos(currentPos));
                 Serial.println(message);
             }
         }
@@ -191,8 +213,50 @@ class ServerCallbacks : public BLEServerCallbacks {
 
     void onDisconnect(BLEServer *pServer) override {
         deviceConnected = false;
+        gameReady = false;
+        hasNotifiedReady = false;
+        gameStarted = false;
+        boardState.clear();
         Serial.println("BLE client disconnected");
         BLEDevice::startAdvertising(); // Restart advertising
+    }
+};
+
+class StatusCharCallback : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) override {
+        std::string value = pCharacteristic->getValue();
+
+        if (value.length() > 0) {
+            Serial.print("App wrote: ");
+            Serial.println(value.c_str());
+            if (!gameStarted && value == "start_confirmed") {
+                Serial.println("Game start confirmed by app!");
+                gameStarted = true;
+            }
+            if (value.rfind("move_ack:", 0) == 0) {
+                std::string from = value.substr(9, 2).c_str();
+                std::string to = value.substr(11, 2).c_str();
+                Serial.print("Move confirmed by app: ");
+                Serial.println(("From: " + from + " To: " + to).c_str());
+                std::string uid = boardState.getFromXYPos(XYPos(from));
+                boardState.eraseByXYPos(from);
+                boardState.insert(uid, XYPos(to));
+                hovering.erase(uid);
+            }
+        }
+        if (value.rfind("capture_ack:", 0) == 0) {
+            std::string move = value.substr(12); // skip "capture_ack:"
+            std::string from = move.substr(0, 2);
+            std::string to = move.substr(2, 2);
+
+            std::string uid_captured = boardState.getFromXYPos(XYPos(to));
+            std::string uid = boardState.getFromXYPos(XYPos(from));
+            boardState.eraseByUid(uid_captured);
+            hovering.erase(uid);
+            boardState.eraseByXYPos(from);     // remove from old position
+            boardState.insert(uid, XYPos(to)); // insert at captured square
+            Serial.println(("Capture ACK processed: " + from + " -> " + to).c_str());
+        }
     }
 };
 
@@ -217,6 +281,7 @@ void setup() {
         BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_WRITE);
     statusChar->addDescriptor(new BLE2902());
     statusChar->setValue("waiting");
+    statusChar->setCallbacks(new StatusCharCallback());
     pService->start();
 
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -242,10 +307,6 @@ void loop() {
         Serial.println("Notified app: ready_to_start");
     }
 
-    if (!gameStarted && statusChar->getValue() == "start_confirmed") {
-        Serial.println("Game start confirmed by app!");
-        gameStarted = true;
-    }
     if (gameStarted) {
         scanBoard();
     }

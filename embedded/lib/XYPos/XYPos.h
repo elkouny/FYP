@@ -1,10 +1,10 @@
 #ifndef XY_POS_H
 #define XY_POS_H
 
+#include <Arduino.h>
 #include <array>
 #include <iostream>
 #include <string>
-#include <Arduino.h>
 #include <vector>
 
 // Enum class to represent index values
@@ -37,6 +37,7 @@ public:
     XYPos(Index x, int y);
     XYPos(std::array<int, 2> &xy);
     XYPos(const std::array<int, 2> &xy);
+    XYPos(std::string pos) : x(static_cast<Index>(pos[0]) - 'a' + 1), y(pos[1] - '0') {}
 
     // Operator overloads
     XYPos operator+(const XYPos &other) const;
