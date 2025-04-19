@@ -37,7 +37,7 @@ class BLEManager {
     _scanSub?.cancel();
 
     // Start scanning for BLE devices.
-    FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+    FlutterBluePlus.startScan(timeout: const Duration(seconds: 60));
     _scanSub = FlutterBluePlus.scanResults.listen((results) async {
       for (var result in results) {
         if (result.device.platformName == "SmartChessBoard") {

@@ -9,8 +9,8 @@ class GameScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Chess Game')),
-      body: Column(
-        children: const [
+      body: const Column(
+        children: [
           TimerWidget(),
           Expanded(child: ChessBoard()),
         ],

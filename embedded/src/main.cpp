@@ -33,7 +33,6 @@ bool gameStarted = false;
 // byte to chess id
 BiMap<std::string, XYPos> boardState;
 std::set<std::string> hovering;
-Board board;
 
 // === Pin helpers ===
 void sendBit(int val) {
@@ -141,10 +140,10 @@ void scanBoard() {
                 message = "move:" + boardState.getFromUid(uid).toString() + currentPos.toString();
                 statusChar->setValue(message.c_str());
                 statusChar->notify();
-                Serial.println("Message sent" + message);
+                Serial.println("Message sent " + message);
             }
         } else {
-            if (boardState.containsXYPos(currentPos)) {
+            if (boardState.containsXYPos(currentPos) && !hovering.count(boardState.getFromXYPos(currentPos))) {
                 // hover
                 message = "hover:" + currentPos.toString();
                 statusChar->setValue(message.c_str());
@@ -170,8 +169,9 @@ void initializeBoard() {
             XYPos currentPos = readerToXYPos(i);
 
             byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
-            while (!mfrc522.PCD_PerformSelfTest() || v == 0x00 || v == 0xFF) {
+            if (!mfrc522.PCD_PerformSelfTest() || v == 0x00 || v == 0xFF) {
                 Serial.println("Retrying reader at " + currentPos.toString());
+                mfrc522.PCD_DumpVersionToSerial();
                 clearRegisters();
                 activateReader(i);
                 mfrc522.PCD_Init();
@@ -188,6 +188,11 @@ void initializeBoard() {
                     }
                 } else {
                     Serial.println("Invalid piece at row " + String(currentPos.y) + " — only 1–2 or 7–8 allowed.");
+                }
+            }
+            else{
+                if(boardState.containsXYPos(currentPos)){
+                    boardState.eraseByXYPos(currentPos);
                 }
             }
         }
@@ -301,6 +306,7 @@ void loop() {
     }
 
     if (gameReady && !hasNotifiedReady) {
+        delay(2000);
         statusChar->setValue("ready_to_start");
         statusChar->notify();
         hasNotifiedReady = true;

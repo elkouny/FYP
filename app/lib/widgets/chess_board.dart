@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:chess/chess.dart' as chess;
 import '../services/ble_manager.dart';
+import '../main.dart';
+import 'package:collection/collection.dart';
 
 class ChessBoard extends StatefulWidget {
   final BLEManager bleManager;
@@ -16,13 +18,14 @@ class _ChessBoardState extends State<ChessBoard> {
   List<String> validMoves = [];
   List<String> capturedWhite = [];
   List<String> capturedBlack = [];
-
+  bool pauseBle = false;
   @override
   void initState() {
     super.initState();
     _game = chess.Chess();
 
     widget.bleManager.statusStream.listen((msg) {
+      if (pauseBle) return;
       if (msg.startsWith("hover:")) {
         final square = msg.split(":")[1];
         _highlightMoves(square);
@@ -34,8 +37,26 @@ class _ChessBoardState extends State<ChessBoard> {
         _captureMove(move.substring(0, 2), move.substring(2, 4));
       } else if (msg.startsWith("clear")) {
         _clearHighlight();
+      } else if (msg == "Disconnected") {
+        _handleDisconnect();
       }
     });
+  }
+
+  void _handleDisconnect() {
+    // Show an alert when disconnected
+    _showAlert("❌ Bluetooth Disconnected");
+    // Navigate back to the home screen
+    _navigateToHome();
+  }
+
+  void _navigateToHome() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ChessBoardBLEPage(),
+      ), // Go back to the home screen
+    );
   }
 
   void _highlightMoves(String square) {
@@ -72,24 +93,39 @@ class _ChessBoardState extends State<ChessBoard> {
     }
   }
 
-  void _makeMove(String from, String to) {
-    const int BITS_EP_CAPTURE = 8;
+  void _makeMove(String from, String to) async {
+    const int bitsEpCapture = 8;
+    const int bitsKsideCastle = 32;
+    const int bitsQsideCastle = 64;
+    const int bitsPromotion = 16;
 
     final piece = _game.get(from);
+    String? promo;
 
     if (piece == null || piece.color != _game.turn) {
-      widget.bleManager.writeCharacteristic("Invalid move");
       _showAlert("⛔ It's not ${piece?.color.name}'s turn");
       return;
     }
-    chess.Move moveObj = _game.generate_moves().firstWhere(
+    final moveObj = _game.generate_moves().firstWhereOrNull(
       (m) => m.fromAlgebraic == from && m.toAlgebraic == to,
     );
-    final success = _game.move({'from': from, 'to': to});
+    if (moveObj == null) {
+      _showAlert("⛔ Invalid move from $from to $to");
+      return;
+    }
+    if (moveObj.flags & bitsPromotion != 0) {
+      widget.bleManager.writeCharacteristic("promotion!!!");
+      pauseBle = true;
+      promo = await _showPromotionDialog();
+      if (promo == null) {
+        _clearHighlight();
+      }
+    }
+    final success = _game.move({'from': from, 'to': to, 'promotion': promo});
+    pauseBle = false;
     if (success) {
-      if (moveObj.flags & BITS_EP_CAPTURE != 0) {
+      if (moveObj.flags & bitsEpCapture != 0) {
         widget.bleManager.writeCharacteristic("en passant!!!");
-
         final capture = to[0] + from[1];
         final captured = _game.get(to);
         if (captured != null) {
@@ -102,6 +138,20 @@ class _ChessBoardState extends State<ChessBoard> {
           widget.bleManager.writeCharacteristic("move_ack:$capture$to");
           _clearHighlight();
         }
+      } else if (moveObj.flags & bitsKsideCastle != 0) {
+        widget.bleManager.writeCharacteristic("kingside castle!!!");
+        final rookFrom = 'h${to[1]}';
+        final rookTo = 'f${to[1]}';
+        widget.bleManager.writeCharacteristic("move_ack:$from$to");
+        widget.bleManager.writeCharacteristic("move_ack:$rookFrom$rookTo");
+        _clearHighlight();
+      } else if (moveObj.flags & bitsQsideCastle != 0) {
+        widget.bleManager.writeCharacteristic("queenside castle!!!");
+        final rookFrom = 'a${to[1]}';
+        final rookTo = 'd${to[1]}';
+        widget.bleManager.writeCharacteristic("move_ack:$from$to");
+        widget.bleManager.writeCharacteristic("move_ack:$rookFrom$rookTo");
+        _clearHighlight();
       } else {
         widget.bleManager.writeCharacteristic("move_ack:$from$to");
         _clearHighlight();
@@ -109,6 +159,37 @@ class _ChessBoardState extends State<ChessBoard> {
     } else {
       _showAlert("❌ Invalid move from $from to $to");
     }
+  }
+
+  Future<String?> _showPromotionDialog() {
+    // determine color so we show white or black pieces
+    final isWhite = _game.turn == chess.Color.WHITE;
+    final colorPrefix = isWhite ? 'w' : 'b';
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false, // force a choice
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text("Choose promotion"),
+            content: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _promoTile(ctx, '${colorPrefix}q', 'q'),
+                _promoTile(ctx, '${colorPrefix}r', 'r'),
+                _promoTile(ctx, '${colorPrefix}b', 'b'),
+                _promoTile(ctx, '${colorPrefix}n', 'n'),
+              ],
+            ),
+          ),
+    );
+  }
+
+  Widget _promoTile(BuildContext ctx, String assetName, String promoPiece) {
+    return GestureDetector(
+      onTap: () => Navigator.of(ctx).pop(promoPiece),
+      child: Image.asset('assets/pieces/$assetName.png', width: 48, height: 48),
+    );
   }
 
   void _clearHighlight() {
