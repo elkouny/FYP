@@ -155,6 +155,14 @@ void scanBoard() {
     }
 }
 
+void resetBoard() {
+    gameReady = false;
+    hasNotifiedReady = false;
+    gameStarted = false;
+    boardState.clear();
+    Serial.println("Reseting board state");
+}
+
 void initializeBoard() {
 
     Serial.println(" Waiting for all 32 pieces to be placed in valid positions");
@@ -189,9 +197,8 @@ void initializeBoard() {
                 } else {
                     Serial.println("Invalid piece at row " + String(currentPos.y) + " — only 1–2 or 7–8 allowed.");
                 }
-            }
-            else{
-                if(boardState.containsXYPos(currentPos)){
+            } else {
+                if (boardState.containsXYPos(currentPos)) {
                     boardState.eraseByXYPos(currentPos);
                 }
             }
@@ -218,11 +225,8 @@ class ServerCallbacks : public BLEServerCallbacks {
 
     void onDisconnect(BLEServer *pServer) override {
         deviceConnected = false;
-        gameReady = false;
-        hasNotifiedReady = false;
-        gameStarted = false;
-        boardState.clear();
         Serial.println("BLE client disconnected");
+        resetBoard();
         BLEDevice::startAdvertising(); // Restart advertising
     }
 };
@@ -248,19 +252,24 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
                 boardState.insert(uid, XYPos(to));
                 hovering.erase(uid);
             }
-        }
-        if (value.rfind("capture_ack:", 0) == 0) {
-            std::string move = value.substr(12); // skip "capture_ack:"
-            std::string from = move.substr(0, 2);
-            std::string to = move.substr(2, 2);
-
-            std::string uid_captured = boardState.getFromXYPos(XYPos(to));
-            std::string uid = boardState.getFromXYPos(XYPos(from));
-            boardState.eraseByUid(uid_captured);
-            hovering.erase(uid);
-            boardState.eraseByXYPos(from);     // remove from old position
-            boardState.insert(uid, XYPos(to)); // insert at captured square
-            Serial.println(("Capture ACK processed: " + from + " -> " + to).c_str());
+            if (value.rfind("capture_ack:", 0) == 0) {
+                std::string move = value.substr(12); // skip "capture_ack:"
+                std::string from = move.substr(0, 2);
+                std::string to = move.substr(2, 2);
+                std::string uid_captured = boardState.getFromXYPos(XYPos(to));
+                std::string uid = boardState.getFromXYPos(XYPos(from));
+                boardState.eraseByUid(uid_captured);
+                hovering.erase(uid);
+                boardState.eraseByXYPos(from);     // remove from old position
+                boardState.insert(uid, XYPos(to)); // insert at captured square
+                Serial.println(("Capture ACK processed: " + from + " -> " + to).c_str());
+            }
+            if (value.rfind("game_ended", 0) == 0) {
+                resetBoard();
+                delay(100);
+                statusChar->setValue("connected");
+                statusChar->notify();
+            }
         }
     }
 };

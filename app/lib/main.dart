@@ -93,9 +93,19 @@ class _ChessBoardBLEPageState extends State<ChessBoardBLEPage> {
         statusMessage = "🚀 Game started!";
       });
 
-      Navigator.pushReplacement(
+      Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => ChessBoard(bleManager: bleManager)),
+        MaterialPageRoute(
+          builder:
+              (_) => ChessBoard(
+                key: UniqueKey(),
+                bleManager: bleManager,
+                whitePlayerName: "Ismail", // Default name
+                blackPlayerName: "Kouny", // Default name
+                whitePlayerRating: 500, // Default rating
+                blackPlayerRating: 1200, // Default rating
+              ),
+        ),
       );
     } catch (e) {
       setState(() => statusMessage = "❌ Failed to start game: $e");

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:chess/chess.dart' as chess;
 import '../services/ble_manager.dart';
@@ -6,7 +8,19 @@ import 'package:collection/collection.dart';
 
 class ChessBoard extends StatefulWidget {
   final BLEManager bleManager;
-  const ChessBoard({required this.bleManager, super.key});
+  final String whitePlayerName;
+  final String blackPlayerName;
+  final int whitePlayerRating;
+  final int blackPlayerRating;
+
+  const ChessBoard({
+    required this.bleManager,
+    required this.whitePlayerName,
+    required this.blackPlayerName,
+    required this.whitePlayerRating,
+    required this.blackPlayerRating,
+    super.key,
+  });
 
   @override
   State<ChessBoard> createState() => _ChessBoardState();
@@ -19,12 +33,15 @@ class _ChessBoardState extends State<ChessBoard> {
   List<String> capturedWhite = [];
   List<String> capturedBlack = [];
   bool pauseBle = false;
+  late StreamSubscription<String> _statusSub;
+
   @override
   void initState() {
     super.initState();
     _game = chess.Chess();
 
-    widget.bleManager.statusStream.listen((msg) {
+    _statusSub = widget.bleManager.statusStream.listen((msg) {
+      if (_statusSub.isPaused) return;
       if (pauseBle) return;
       if (msg.startsWith("hover:")) {
         final square = msg.split(":")[1];
@@ -50,13 +67,9 @@ class _ChessBoardState extends State<ChessBoard> {
     _navigateToHome();
   }
 
-  void _navigateToHome() {
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const ChessBoardBLEPage(),
-      ), // Go back to the home screen
-    );
+  void _navigateToHome() async {
+    await widget.bleManager.writeCharacteristic("game_ended");
+    Navigator.pop(context); // Go back to the home screen
   }
 
   void _highlightMoves(String square) {
@@ -88,6 +101,7 @@ class _ChessBoardState extends State<ChessBoard> {
       }
       widget.bleManager.writeCharacteristic("capture_ack:$from$to");
       _clearHighlight();
+      _checkGameStatus();
     } else {
       _showAlert("Invalid capture $from → $to");
     }
@@ -102,8 +116,8 @@ class _ChessBoardState extends State<ChessBoard> {
     final piece = _game.get(from);
     String? promo;
 
-    if (piece == null || piece.color != _game.turn) {
-      _showAlert("⛔ It's not ${piece?.color.name}'s turn");
+    if (piece != null && piece.color != _game.turn) {
+      _showAlert("⛔ It's not ${piece.color.name}'s turn");
       return;
     }
     final moveObj = _game.generate_moves().firstWhereOrNull(
@@ -156,8 +170,37 @@ class _ChessBoardState extends State<ChessBoard> {
         widget.bleManager.writeCharacteristic("move_ack:$from$to");
         _clearHighlight();
       }
+      _checkGameStatus();
     } else {
       _showAlert("❌ Invalid move from $from to $to");
+    }
+  }
+
+  void _checkGameStatus() {
+    // Checkmate?
+    if (_game.in_checkmate) {
+      final winner = _game.turn == chess.Color.WHITE ? 'Black' : 'White';
+      _showEndingAlert("🎉 Checkmate! $winner wins.");
+    }
+
+    // Stalemate?
+    if (_game.in_stalemate) {
+      _showEndingAlert("🤝 Stalemate — draw.");
+    }
+
+    // Draw by insufficient material?
+    if (_game.insufficient_material) {
+      _showEndingAlert("🤝 Draw by insufficient material.");
+    }
+
+    // Draw by threefold repetition?
+    if (_game.in_threefold_repetition) {
+      _showEndingAlert("🤝 Draw by threefold repetition.");
+    }
+
+    // Any other draw?
+    if (_game.in_draw) {
+      _showEndingAlert("🤝 Draw.");
     }
   }
 
@@ -200,9 +243,48 @@ class _ChessBoardState extends State<ChessBoard> {
   }
 
   void _showAlert(String msg) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    pauseBle = true;
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text("Alert"),
+          content: Text(msg),
+          actions: [
+            TextButton(
+              child: const Text("OK"),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+                pauseBle = false;
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showEndingAlert(String msg) {
+    pauseBle = true;
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text("Alert"),
+          content: Text(msg),
+          actions: [
+            TextButton(
+              child: const Text("OK"),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+                pauseBle = false;
+                _navigateToHome();
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _buildPiece(chess.Piece piece) {
@@ -213,35 +295,76 @@ class _ChessBoardState extends State<ChessBoard> {
     return Image.asset(path, width: 40, height: 40, fit: BoxFit.contain);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.green[900],
-      appBar: AppBar(
-        title: const Text('Smart Chess Board'),
-        backgroundColor: Colors.brown[700],
+  Widget _buildMoveLog() {
+    final moves = _game.san_moves();
+    return Container(
+      height: 32,
+      color: Colors.grey[850],
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        reverse: true, // Scroll to the end by default
+        itemCount: moves.length,
+        itemBuilder: (ctx, i) {
+          final moveIndex = moves.length - 1 - i; // Reverse index
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              moves[moveIndex]!,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+            ),
+          );
+        },
       ),
-      body: Column(
+    );
+  }
+
+  Widget _buildPlayerDisplay(String playerName, String playerRating) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
         children: [
-          const SizedBox(height: 6),
-          _buildCapturedRow(capturedWhite, "Black"),
-          const SizedBox(height: 4),
-          _buildTimer("Black", "05:00"),
-          _buildBoard(),
-          _buildTimer("White", "05:00"),
-          _buildCapturedRow(capturedBlack, "White"),
-          const SizedBox(height: 6),
-          Text(
-            _game.turn == chess.Color.WHITE ? "White to move" : "Black to move",
-            style: const TextStyle(color: Colors.white, fontSize: 18),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                playerName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
+                "($playerRating)",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
         ],
       ),
     );
   }
 
-  Widget _buildCapturedRow(List<String> pieces, String player) {
+  Widget _buildInfoRow(String player, List<String> pieces, bool isActive) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween, // Space between
+        children: [
+          _buildCapturedPieces(pieces, player),
+          _buildTimer(player, "05:00", isActive),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCapturedPieces(List<String> pieces, String player) {
     final points = pieces.fold(0, (sum, p) {
       switch (p.toLowerCase()) {
         case 'p':
@@ -260,7 +383,7 @@ class _ChessBoardState extends State<ChessBoard> {
     });
 
     return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.start,
       children: [
         ...pieces.map((p) {
           final color = player == "Black" ? 'w' : 'b';
@@ -279,66 +402,203 @@ class _ChessBoardState extends State<ChessBoard> {
     );
   }
 
-  Widget _buildTimer(String player, String time) {
+  Widget _buildTimer(String player, String time, bool isActive) {
+    final bgColor =
+        isActive
+            ? (player == "White" ? Colors.white : Colors.black)
+            : (player == "White" ? Colors.grey[300] : Colors.grey[900]);
+    final textColor =
+        isActive
+            ? (player == "White" ? Colors.black : Colors.white)
+            : (player == "White" ? Colors.black54 : Colors.grey);
+    final fontWeight = isActive ? FontWeight.bold : FontWeight.normal;
+    final iconColor = player == "White" ? Colors.black : Colors.white;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Text(
-        "$player: $time",
-        style: const TextStyle(color: Colors.white, fontSize: 16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.grey[700]!, width: 1),
+        ),
+        padding: const EdgeInsets.all(8.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (isActive)
+              Icon(
+                Icons.timer,
+                color: iconColor,
+                size: 16,
+              ), // Timer icon when active
+            const SizedBox(width: 4),
+            Text(
+              time,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 16,
+                fontWeight: fontWeight,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildBoard() {
-    return AspectRatio(
-      aspectRatio: 1.0,
-      child: GridView.builder(
-        itemCount: 64,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 8,
-        ),
-        itemBuilder: (context, index) {
-          final row = 7 - index ~/ 8;
-          final col = index % 8;
-          final square =
-              String.fromCharCode('a'.codeUnitAt(0) + col) +
-              (row + 1).toString();
-
-          final piece = _game.get(square);
-          final isLight = (row + col) % 2 == 0;
-          final isSelected = selectedSquare == square;
-          final isValid = validMoves.contains(square);
-          final baseColor =
-              isLight ? const Color(0xFFEEEED2) : const Color(0xFF769656);
-          final squareColor = isSelected ? Colors.yellow : baseColor;
-
-          return GestureDetector(
-            onTap: () => _highlightMoves(square),
-            child: Container(
-              color: squareColor,
-              child: Stack(
-                children: [
-                  if (isValid && piece == null)
-                    Center(
-                      child: Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[700]!,
-                          shape: BoxShape.circle,
+    return Column(
+      children: [
+        // 1: the board + ranks
+        AspectRatio(
+          aspectRatio: 1.0,
+          child: Row(
+            children: [
+              // RANK LABELS: each Expanded takes 1/8 of the height
+              Column(
+                children: List.generate(8, (i) {
+                  final rank = (8 - i).toString();
+                  return Expanded(
+                    child: Center(
+                      child: Text(
+                        rank,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
                         ),
                       ),
                     ),
-                  if (isValid && piece != null)
-                    Container(color: Colors.redAccent), // Capture highlight
+                  );
+                }),
+              ),
 
-                  Center(child: piece == null ? null : _buildPiece(piece)),
-                ],
+              // THE BOARD ITSELF
+              Expanded(
+                child: GridView.builder(
+                  itemCount: 64,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 8,
+                  ),
+                  itemBuilder: (context, index) => _buildSquare(context, index),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // 2: the file labels row
+        Row(
+          children: [
+            // Spacer matching the width of the rank‑column.
+
+            // Now 8 Expanded children, each under its square
+            Expanded(
+              child: Row(
+                children: List.generate(8, (i) {
+                  final file = String.fromCharCode('a'.codeUnitAt(0) + i);
+                  return Expanded(
+                    child: Center(
+                      child: Text(
+                        file,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  );
+                }),
               ),
             ),
-          );
-        },
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSquare(BuildContext context, int index) {
+    final row = 7 - index ~/ 8;
+    final col = index % 8;
+    final square =
+        String.fromCharCode('a'.codeUnitAt(0) + col) + (row + 1).toString();
+
+    final piece = _game.get(square);
+    final isLight = (row + col) % 2 == 0;
+    final isSelected = selectedSquare == square;
+    final isValid = validMoves.contains(square);
+    final baseColor =
+        isLight ? const Color(0xFFEEEED2) : const Color(0xFF769656);
+    final squareColor = isSelected ? Colors.yellow : baseColor;
+
+    return GestureDetector(
+      onTap: () => _highlightMoves(square),
+      child: Container(
+        color: squareColor,
+        child: Stack(
+          children: [
+            if (isValid && piece == null)
+              Center(
+                child: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[700]!,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            if (isValid && piece != null)
+              Container(color: Colors.redAccent), // Capture highlight
+
+            Center(child: piece == null ? null : _buildPiece(piece)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool whiteToMove = _game.turn == chess.Color.WHITE;
+
+    return Scaffold(
+      backgroundColor: Colors.grey[800], // Dark gray background
+      appBar: AppBar(
+        title: const Text('Smart Chess Board'),
+        backgroundColor: Colors.brown[700],
+      ),
+      body: Column(
+        children: [
+          _buildMoveLog(),
+          _buildPlayerDisplay(
+            widget.blackPlayerName,
+            widget.blackPlayerRating.toString(),
+          ),
+          const SizedBox(height: 6),
+          _buildInfoRow("Black", capturedWhite, !whiteToMove), // Combined row
+          const SizedBox(height: 4),
+          _buildBoard(),
+          _buildInfoRow("White", capturedBlack, whiteToMove), // Combined row
+          const SizedBox(height: 6),
+          _buildPlayerDisplay(
+            widget.whitePlayerName,
+            widget.whitePlayerRating.toString(),
+          ),
+          const SizedBox(height: 10),
+          // Quit button
+          ElevatedButton.icon(
+            onPressed: _navigateToHome,
+            icon: const Icon(Icons.exit_to_app),
+            label: const Text('Quit'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              textStyle: const TextStyle(fontSize: 16),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
       ),
     );
   }
