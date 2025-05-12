@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/home_screen.dart';
+import 'screens/main_screen.dart';
 
 class ChessApp extends StatelessWidget {
   const ChessApp({Key? key}) : super(key: key);
@@ -12,7 +12,7 @@ class ChessApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF1A1A1A),
       ),
-      home: const HomeScreen(),
+      home: const MainScreen(),
     );
   }
 }

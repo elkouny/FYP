@@ -60,6 +60,12 @@ class _ChessBoardState extends State<ChessBoard> {
     });
   }
 
+  @override
+  void dispose() {
+    _statusSub.cancel();
+    super.dispose();
+  }
+
   void _handleDisconnect() {
     // Show an alert when disconnected
     _showAlert("❌ Bluetooth Disconnected");
@@ -84,6 +90,9 @@ class _ChessBoardState extends State<ChessBoard> {
                 .map((m) => m.toAlgebraic)
                 .toList();
       });
+      widget.bleManager.writeCharacteristic(
+        "light_on:${square + validMoves.join("")}",
+      );
     } else {
       _clearHighlight();
     }
@@ -240,6 +249,7 @@ class _ChessBoardState extends State<ChessBoard> {
       selectedSquare = null;
       validMoves = [];
     });
+    widget.bleManager.writeCharacteristic("light_off");
   }
 
   void _showAlert(String msg) {

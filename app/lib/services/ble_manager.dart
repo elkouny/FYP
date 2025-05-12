@@ -45,7 +45,7 @@ class BLEManager {
           device = result.device;
           try {
             await device!.connect(autoConnect: false);
-            await device!.requestMtu(23);
+            // await device!.requestMtu(23);
 
             // Listen for connection state changes.
             _connectionSub = device!.connectionState.listen((state) {
