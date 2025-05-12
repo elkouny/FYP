@@ -1,3 +1,4 @@
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <BLE2902.h>
 #include <BLEDevice.h>
@@ -14,6 +15,8 @@
 #define SER 4
 #define CLK 3
 #define CLR 2
+#define NUM_PIXELS 64
+#define DATA_PIN 18 // actually d9 on arduino nano esp32
 
 // BLE UUIDs
 #define SERVICE_UUID "0000180C-0000-1000-8000-00805F9B34FB"
@@ -23,6 +26,7 @@
 bool deviceConnected = false;
 BLECharacteristic *statusChar = nullptr;
 MFRC522 mfrc522(SS_PIN, RST_PIN);
+Adafruit_NeoPixel strip(NUM_PIXELS, DATA_PIN, NEO_GRB + NEO_KHZ800);
 
 // Board state
 int state = 0;
@@ -37,11 +41,8 @@ std::set<std::string> hovering;
 // === Pin helpers ===
 void sendBit(int val) {
     digitalWrite(SER, val);
-    delayMicroseconds(10);
     digitalWrite(CLK, LOW);
-    delayMicroseconds(10);
     digitalWrite(CLK, HIGH);
-    delayMicroseconds(10);
 }
 
 void sendByte(uint8_t val, int order) {
@@ -53,7 +54,6 @@ void sendByte(uint8_t val, int order) {
             sendBit((val & 1) != 0);
             val >>= 1;
         }
-        delayMicroseconds(10);
     }
 }
 
@@ -74,7 +74,9 @@ void activateReader(int readerIndex) {
 
 void clearRegisters() {
     digitalWrite(CLR, LOW);
+    delayMicroseconds(10);
     digitalWrite(CLR, HIGH);
+    delayMicroseconds(10);
 }
 
 std::string uidToString(const MFRC522::Uid &uid) {
@@ -85,6 +87,12 @@ XYPos readerToXYPos(int readerIndex) {
     int x = readerIndex % 8 + 1;
     int y = readerIndex / 8 + 1;
     return XYPos(x, y);
+}
+
+int stringPosToIndex(const std::string &pos) {
+    int file = pos[0] - 'a';
+    int rank = pos[1] - '1'; 
+    return rank * 8 + file;  
 }
 
 void scanBoard() {
@@ -168,7 +176,6 @@ void initializeBoard() {
     Serial.println(" Waiting for all 32 pieces to be placed in valid positions");
 
     while (true) {
-
         for (int i = 0; i < numReaders; i++) {
             clearRegisters();
             activateReader(i);
@@ -177,7 +184,8 @@ void initializeBoard() {
             XYPos currentPos = readerToXYPos(i);
 
             byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
-            if (!mfrc522.PCD_PerformSelfTest() || v == 0x00 || v == 0xFF) {
+
+            while (!mfrc522.PCD_PerformSelfTest() || v == 0x00 || v == 0xFF) {
                 Serial.println("Retrying reader at " + currentPos.toString());
                 mfrc522.PCD_DumpVersionToSerial();
                 clearRegisters();
@@ -241,8 +249,7 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
             if (!gameStarted && value == "start_confirmed") {
                 Serial.println("Game start confirmed by app!");
                 gameStarted = true;
-            }
-            if (value.rfind("move_ack:", 0) == 0) {
+            } else if (value.rfind("move_ack:", 0) == 0) {
                 std::string from = value.substr(9, 2).c_str();
                 std::string to = value.substr(11, 2).c_str();
                 Serial.print("Move confirmed by app: ");
@@ -251,8 +258,7 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
                 boardState.eraseByXYPos(from);
                 boardState.insert(uid, XYPos(to));
                 hovering.erase(uid);
-            }
-            if (value.rfind("capture_ack:", 0) == 0) {
+            } else if (value.rfind("capture_ack:", 0) == 0) {
                 std::string move = value.substr(12); // skip "capture_ack:"
                 std::string from = move.substr(0, 2);
                 std::string to = move.substr(2, 2);
@@ -263,12 +269,23 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
                 boardState.eraseByXYPos(from);     // remove from old position
                 boardState.insert(uid, XYPos(to)); // insert at captured square
                 Serial.println(("Capture ACK processed: " + from + " -> " + to).c_str());
-            }
-            if (value.rfind("game_ended", 0) == 0) {
+            } else if (value.rfind("game_ended", 0) == 0) {
                 resetBoard();
                 delay(100);
                 statusChar->setValue("connected");
                 statusChar->notify();
+            } else if (value.rfind("light_on", 0) == 0) {
+                std::string lights = value.substr(9);
+                for (int i = 0; i < lights.size(); i += 2) {
+                    int index = stringPosToIndex(lights.substr(i, 2));
+                    strip.setPixelColor(index, strip.Color(0, 255, 0));
+                }
+                strip.show();
+            } else if (value.rfind("light_off", 0) == 0) {
+                for (int i = 0; i < NUM_PIXELS; i++) {
+                    strip.setPixelColor(i, strip.Color(0, 0, 0));
+                }
+                strip.show();
             }
         }
     }
@@ -277,6 +294,8 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
 void setup() {
     Serial.begin(9600);
     SPI.begin();
+    strip.begin();
+    strip.show();
 
     pinMode(CLK, OUTPUT);
     pinMode(SER, OUTPUT);
@@ -326,3 +345,48 @@ void loop() {
         scanBoard();
     }
 }
+
+// #include <Adafruit_NeoPixel.h>
+// #include <Arduino.h>
+// #define NUM_PIXELS 64
+// #define DATA_PIN 18 // actually d9 on arduino nano esp32
+// Adafruit_NeoPixel strip(NUM_PIXELS, DATA_PIN, NEO_GRB + NEO_KHZ800);
+
+// void setup() {
+//     Serial.begin(9600);
+//     strip.begin();
+
+//     strip.show(); // Initialize all pixels to 'off'
+// }
+
+// void loop() {
+//     Serial.println("Sending red");
+//     for (int i = 0; i < NUM_PIXELS; i++) {
+//         strip.setPixelColor(i, strip.Color(255, 0, 0));
+//         strip.show();
+//         delay(100);
+//     }
+
+//     Serial.println("Sending green");
+
+//     for (int i = 0; i < NUM_PIXELS; i++) {
+//         strip.setPixelColor(i, strip.Color(0, 255, 0));
+//         strip.show();
+//         delay(100);
+//     }
+
+//     Serial.println("Sending blue");
+
+//     for (int i = 0; i < NUM_PIXELS; i++) {
+//         strip.setPixelColor(i, strip.Color(0, 0, 255));
+//         strip.show();
+//         delay(100);
+//     }
+
+//     Serial.println("turning off");
+//     for (int i = 0; i < NUM_PIXELS; i++) {
+//         strip.setPixelColor(i, strip.Color(0, 0, 0));
+//         strip.show();
+//         delay(100);
+//     }
+// }
