@@ -1,9 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:chess/chess.dart' as chess;
+import 'package:http/http.dart' as http;
 import '../services/ble_manager.dart';
-import '../main.dart';
 import 'package:collection/collection.dart';
 
 class ChessBoard extends StatefulWidget {
@@ -12,6 +13,10 @@ class ChessBoard extends StatefulWidget {
   final String blackPlayerName;
   final int whitePlayerRating;
   final int blackPlayerRating;
+  final bool? playAgainstBot;
+  final String? userColor;
+  final String? lichessGameId;
+  final String? lichessToken;
 
   const ChessBoard({
     required this.bleManager,
@@ -20,6 +25,10 @@ class ChessBoard extends StatefulWidget {
     required this.whitePlayerRating,
     required this.blackPlayerRating,
     super.key,
+    this.lichessGameId,
+    this.lichessToken,
+    this.playAgainstBot,
+    this.userColor,
   });
 
   @override
@@ -32,7 +41,10 @@ class _ChessBoardState extends State<ChessBoard> {
   List<String> validMoves = [];
   List<String> capturedWhite = [];
   List<String> capturedBlack = [];
+  String latestBleMessage = "";
+
   bool pauseBle = false;
+  String lastCommand = "";
   late StreamSubscription<String> _statusSub;
 
   @override
@@ -57,6 +69,7 @@ class _ChessBoardState extends State<ChessBoard> {
       } else if (msg == "Disconnected") {
         _handleDisconnect();
       }
+      latestBleMessage = msg;
     });
   }
 
@@ -90,15 +103,17 @@ class _ChessBoardState extends State<ChessBoard> {
                 .map((m) => m.toAlgebraic)
                 .toList();
       });
-      widget.bleManager.writeCharacteristic(
-        "light_on:${square + validMoves.join("")}",
-      );
+      String command = "light_on:${square + validMoves.join("")}";
+      if (lastCommand != command) {
+        widget.bleManager.writeCharacteristic(command);
+        lastCommand = command;
+      }
     } else {
       _clearHighlight();
     }
   }
 
-  void _captureMove(String from, String to) {
+  Future<void> _captureMove(String from, String to) async {
     final captured = _game.get(to);
     final success = _game.move({'from': from, 'to': to});
 
@@ -111,6 +126,11 @@ class _ChessBoardState extends State<ChessBoard> {
       widget.bleManager.writeCharacteristic("capture_ack:$from$to");
       _clearHighlight();
       _checkGameStatus();
+      if (widget.playAgainstBot == true) {
+        final uci = from + to;
+        await _sendMoveToLichess(uci);
+        await _listenForBotMove();
+      }
     } else {
       _showAlert("Invalid capture $from → $to");
     }
@@ -180,8 +200,78 @@ class _ChessBoardState extends State<ChessBoard> {
         _clearHighlight();
       }
       _checkGameStatus();
+      if (widget.playAgainstBot == true) {
+        final uci = from + to + (promo ?? "");
+        await _sendMoveToLichess(uci);
+        await _listenForBotMove();
+      }
     } else {
       _showAlert("❌ Invalid move from $from to $to");
+    }
+  }
+
+  Future<void> _sendMoveToLichess(String uci) async {
+    if (widget.lichessGameId == null || widget.lichessToken == null) return;
+
+    final response = await http.post(
+      Uri.parse(
+        "https://lichess.org/api/board/game/${widget.lichessGameId}/move/$uci",
+      ),
+      headers: {'Authorization': 'Bearer ${widget.lichessToken}'},
+    );
+
+    if (response.statusCode != 200) {
+      _showAlert("❌ Lichess move failed: ${response.body}");
+    }
+  }
+
+  Future<void> _listenForBotMove() async {
+    final gameId = widget.lichessGameId;
+    final token = widget.lichessToken;
+    final userColor = widget.userColor;
+
+    if (gameId == null || token == null || userColor == null) return;
+
+    final request = http.Request(
+      'GET',
+      Uri.parse('https://lichess.org/api/board/game/stream/$gameId'),
+    );
+    request.headers['Authorization'] = 'Bearer $token';
+    final response = await request.send();
+    final lines = response.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+
+    await for (final line in lines) {
+      if (line.trim().isEmpty) continue;
+
+      final event = jsonDecode(line);
+      if (event['type'] == 'gameState') {
+        final moveStr = event['moves'] as String;
+        final moves = moveStr.split(" ");
+
+        // Determine bot's latest move
+        final myMoves = _game.history.map((m) => m.move.toAlgebraic).toList();
+        if (moves.length > myMoves.length) {
+          final latest = moves.last;
+          final from = latest.substring(0, 2);
+          final to = latest.substring(2, 4);
+          // Optional promotion handling
+          final promo = latest.length > 4 ? latest[4] : null;
+
+          setState(() {
+            _game.move({
+              'from': from,
+              'to': to,
+              if (promo != null) 'promotion': promo,
+            });
+          });
+          _highlightMoves(from);
+
+          _checkGameStatus();
+          break;
+        }
+      }
     }
   }
 
@@ -249,7 +339,11 @@ class _ChessBoardState extends State<ChessBoard> {
       selectedSquare = null;
       validMoves = [];
     });
-    widget.bleManager.writeCharacteristic("light_off");
+    String command = "light_off";
+    if (lastCommand != command) {
+      widget.bleManager.writeCharacteristic(command);
+      lastCommand = command;
+    }
   }
 
   void _showAlert(String msg) {

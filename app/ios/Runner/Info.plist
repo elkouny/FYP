@@ -53,5 +53,11 @@
 	<string>This app needs Bluetooth to communicate with peripherals.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app requires location access to scan for nearby Bluetooth devices.</string>
+	<key>NSAppTransportSecurity</key>
+<dict>
+  <key>NSAllowsArbitraryLoads</key>
+  <true/>
+</dict>
+
 </dict>
 </plist>

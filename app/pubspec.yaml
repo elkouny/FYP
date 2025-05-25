@@ -18,6 +18,7 @@ dependencies:
   flutter_appauth: ^2.0.4
 
   collection: any
+  dio: ^5.8.0+1
 dev_dependencies:
   flutter_test:
     sdk: flutter
