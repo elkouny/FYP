@@ -17,19 +17,17 @@
 #define CLR 2
 #define NUM_PIXELS 64
 #define DATA_PIN 18 // actually d9 on arduino nano esp32
-
+#define WIDTH 8
+#define HEIGHT 8
 // BLE UUIDs
 #define SERVICE_UUID "0000180C-0000-1000-8000-00805F9B34FB"
 #define CHARACTERISTIC_UUID "00002A56-0000-1000-8000-00805F9B34FB"
-
 // State
 bool deviceConnected = false;
 BLECharacteristic *statusChar = nullptr;
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 Adafruit_NeoPixel strip(NUM_PIXELS, DATA_PIN, NEO_GRB + NEO_KHZ800);
-
 // Board state
-int state = 0;
 const int numReaders = 64;
 bool gameReady = false;
 bool hasNotifiedReady = false;
@@ -37,7 +35,64 @@ bool gameStarted = false;
 // byte to chess id
 BiMap<std::string, XYPos> boardState;
 std::set<std::string> hovering;
+// FreeRTOS
+#define WRITE_QUEUE_LEN 10
+#define WRITE_MSG_LEN 64
 
+QueueHandle_t writeQueue;
+
+struct WriteMessage {
+    char msg[WRITE_MSG_LEN];
+};
+
+// === Start animation helpers ===
+const float CENTER_X = (WIDTH - 1) / 2.0;
+const float CENTER_Y = (HEIGHT - 1) / 2.0;
+
+// Precomputed distance of each pixel from the center
+float pixelDist[NUM_PIXELS];
+
+// Wave parameters
+float waveRadius = 0.0;      // Current radius of the ring
+const float speed = 0.1;     // Expansion speed
+const float widthBand = 0.4; // Ring thickness
+
+// Map (x, y) to strip index for serpentine wiring
+uint16_t XY(uint8_t x, uint8_t y) {
+    if (y & 0x01) {
+        // Odd rows run backwards
+        return y * WIDTH + (WIDTH - 1 - x);
+    } else {
+        // Even rows run forwards
+        return y * WIDTH + x;
+    }
+}
+
+// Color wheel helper: hue ∈ [0..255]
+uint32_t Wheel(byte hue) {
+    hue = 255 - hue;
+    if (hue < 85) {
+        return strip.Color(255 - hue * 3, 0, hue * 3);
+    } else if (hue < 170) {
+        hue -= 85;
+        return strip.Color(0, hue * 3, 255 - hue * 3);
+    } else {
+        hue -= 170;
+        return strip.Color(hue * 3, 255 - hue * 3, 0);
+    }
+}
+void drawRadiatingWaveFrame() {
+    strip.clear();
+    for (uint16_t i = 0; i < NUM_PIXELS; i++) {
+        float d = pixelDist[i];
+        if (fabs(d - waveRadius) < widthBand) {
+            byte hue = (byte)fmod(waveRadius * 10.0, 255.0);
+            strip.setPixelColor(i, Wheel(hue));
+        }
+    }
+    strip.show();
+    waveRadius += speed;
+}
 // === Pin helpers ===
 void sendBit(int val) {
     digitalWrite(SER, val);
@@ -91,8 +146,8 @@ XYPos readerToXYPos(int readerIndex) {
 
 int stringPosToIndex(const std::string &pos) {
     int file = pos[0] - 'a';
-    int rank = pos[1] - '1'; 
-    return rank * 8 + file;  
+    int rank = pos[1] - '1';
+    return rank * 8 + file;
 }
 
 void scanBoard() {
@@ -117,10 +172,14 @@ void scanBoard() {
         if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) { // is there a piece on this square?
             std::string uid = uidToString(mfrc522.uid);
             if (!boardState.containsUid(uid)) {
+                strip.setPixelColor(i, strip.Color(255, 0, 0));
+                strip.show();
                 while (true) {
                     Serial.println("Error please remove this peice from the square it shouldnt be on the board");
-                    bool read = mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial();
-                    if (!read || uid != uidToString(mfrc522.uid)) {
+                    bool removed = !mfrc522.PICC_ReadCardSerial() && !mfrc522.PICC_ReadCardSerial();
+                    if (removed) {
+                        strip.setPixelColor(i, strip.Color(0, 0, 0));
+                        strip.show();
                         break;
                     }
                 }
@@ -168,13 +227,19 @@ void resetBoard() {
     hasNotifiedReady = false;
     gameStarted = false;
     boardState.clear();
+    strip.clear();
+    strip.show();
     Serial.println("Reseting board state");
 }
 
 void initializeBoard() {
-
+    std::set<int> invalid;
     Serial.println(" Waiting for all 32 pieces to be placed in valid positions");
-
+    for (int i = 0; i < 16; i++) {
+        strip.setPixelColor(i, strip.Color(0, 255, 0));
+        strip.setPixelColor(63 - i, strip.Color(0, 255, 0));
+    }
+    strip.show();
     while (true) {
         for (int i = 0; i < numReaders; i++) {
             clearRegisters();
@@ -201,13 +266,25 @@ void initializeBoard() {
                     if (!boardState.containsXYPos(currentPos) || boardState.getFromXYPos(currentPos) != uid) {
                         boardState.insert(uid, currentPos);
                         Serial.println("Piece placed at " + currentPos.toString());
+                        strip.setPixelColor(i, strip.Color(0, 0, 0));
+                        strip.show();
                     }
                 } else {
+                    strip.setPixelColor(i, strip.Color(255, 0, 0));
+                    strip.show();
                     Serial.println("Invalid piece at row " + String(currentPos.y) + " — only 1–2 or 7–8 allowed.");
+                    invalid.insert(i);
                 }
             } else {
+                if (invalid.count(i)) {
+                    invalid.erase(i);
+                    strip.setPixelColor(i, strip.Color(0, 0, 0));
+                    strip.show();
+                }
                 if (boardState.containsXYPos(currentPos)) {
                     boardState.eraseByXYPos(currentPos);
+                    strip.setPixelColor(i, strip.Color(0, 255, 0));
+                    strip.show();
                 }
             }
         }
@@ -219,6 +296,16 @@ void initializeBoard() {
         if (boardState.forward.size() == 32) {
             Serial.println("Initial board setup complete and valid!");
             gameReady = true;
+            float maxDist = sqrt(CENTER_X * CENTER_X + CENTER_Y * CENTER_Y);
+            for (int cycle = 0; cycle < 2; cycle++) {
+                waveRadius = 0.0;
+                while (waveRadius <= maxDist) {
+                    drawRadiatingWaveFrame();
+                    delay(10);
+                }
+                strip.clear();
+                strip.show();
+            }
             break;
         }
     }
@@ -242,54 +329,72 @@ class ServerCallbacks : public BLEServerCallbacks {
 class StatusCharCallback : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) override {
         std::string value = pCharacteristic->getValue();
-
         if (value.length() > 0) {
-            Serial.print("App wrote: ");
+            WriteMessage msg;
+            strncpy(msg.msg, value.c_str(), WRITE_MSG_LEN - 1);
+            msg.msg[WRITE_MSG_LEN - 1] = '\0'; // Ensure null-termination
+            xQueueSend(writeQueue, &msg, 0);
+        }
+    }
+};
+
+void bleWriteHandler(void *pvParameters) {
+    WriteMessage msg;
+    while (true) {
+        if (xQueueReceive(writeQueue, &msg, portMAX_DELAY) == pdPASS) {
+            std::string value(msg.msg);
+            Serial.print("BLE (threaded) received: ");
             Serial.println(value.c_str());
+
             if (!gameStarted && value == "start_confirmed") {
                 Serial.println("Game start confirmed by app!");
                 gameStarted = true;
+
             } else if (value.rfind("move_ack:", 0) == 0) {
-                std::string from = value.substr(9, 2).c_str();
-                std::string to = value.substr(11, 2).c_str();
-                Serial.print("Move confirmed by app: ");
-                Serial.println(("From: " + from + " To: " + to).c_str());
+                std::string from = value.substr(9, 2);
+                std::string to = value.substr(11, 2);
                 std::string uid = boardState.getFromXYPos(XYPos(from));
                 boardState.eraseByXYPos(from);
                 boardState.insert(uid, XYPos(to));
                 hovering.erase(uid);
+
             } else if (value.rfind("capture_ack:", 0) == 0) {
-                std::string move = value.substr(12); // skip "capture_ack:"
+                std::string move = value.substr(12);
                 std::string from = move.substr(0, 2);
                 std::string to = move.substr(2, 2);
                 std::string uid_captured = boardState.getFromXYPos(XYPos(to));
                 std::string uid = boardState.getFromXYPos(XYPos(from));
                 boardState.eraseByUid(uid_captured);
                 hovering.erase(uid);
-                boardState.eraseByXYPos(from);     // remove from old position
-                boardState.insert(uid, XYPos(to)); // insert at captured square
+                boardState.eraseByXYPos(from);
+                boardState.insert(uid, XYPos(to));
                 Serial.println(("Capture ACK processed: " + from + " -> " + to).c_str());
-            } else if (value.rfind("game_ended", 0) == 0) {
+
+            } else if (value == "game_ended") {
                 resetBoard();
                 delay(100);
                 statusChar->setValue("connected");
                 statusChar->notify();
+
             } else if (value.rfind("light_on", 0) == 0) {
                 std::string lights = value.substr(9);
                 for (int i = 0; i < lights.size(); i += 2) {
                     int index = stringPosToIndex(lights.substr(i, 2));
-                    strip.setPixelColor(index, strip.Color(0, 255, 0));
+                    if (i != 0 && boardState.containsXYPos(readerToXYPos(index)))
+                        strip.setPixelColor(index, strip.Color(255, 0, 0));
+                    else
+                        strip.setPixelColor(index, strip.Color(0, 255, 0));
                 }
                 strip.show();
-            } else if (value.rfind("light_off", 0) == 0) {
-                for (int i = 0; i < NUM_PIXELS; i++) {
-                    strip.setPixelColor(i, strip.Color(0, 0, 0));
-                }
+
+            } else if (value == "light_off") {
+                for (int i = 0; i < NUM_PIXELS; i++)
+                    strip.setPixelColor(i, 0);
                 strip.show();
             }
         }
     }
-};
+}
 
 void setup() {
     Serial.begin(9600);
@@ -325,6 +430,25 @@ void setup() {
     BLEDevice::startAdvertising();
 
     Serial.println("BLE advertising started");
+
+    for (uint8_t y = 0; y < HEIGHT; y++) {
+        for (uint8_t x = 0; x < WIDTH; x++) {
+            uint16_t i = XY(x, y);
+            float dx = x - CENTER_X;
+            float dy = y - CENTER_Y;
+            pixelDist[i] = sqrt(dx * dx + dy * dy);
+        }
+    }
+    writeQueue = xQueueCreate(WRITE_QUEUE_LEN, sizeof(WriteMessage));
+    xTaskCreatePinnedToCore(
+        bleWriteHandler,
+        "BLEWriteHandler",
+        4096,
+        NULL,
+        1,
+        NULL,
+        1 // Core 1 (App core)
+    );
 }
 
 void loop() {
@@ -345,48 +469,3 @@ void loop() {
         scanBoard();
     }
 }
-
-// #include <Adafruit_NeoPixel.h>
-// #include <Arduino.h>
-// #define NUM_PIXELS 64
-// #define DATA_PIN 18 // actually d9 on arduino nano esp32
-// Adafruit_NeoPixel strip(NUM_PIXELS, DATA_PIN, NEO_GRB + NEO_KHZ800);
-
-// void setup() {
-//     Serial.begin(9600);
-//     strip.begin();
-
-//     strip.show(); // Initialize all pixels to 'off'
-// }
-
-// void loop() {
-//     Serial.println("Sending red");
-//     for (int i = 0; i < NUM_PIXELS; i++) {
-//         strip.setPixelColor(i, strip.Color(255, 0, 0));
-//         strip.show();
-//         delay(100);
-//     }
-
-//     Serial.println("Sending green");
-
-//     for (int i = 0; i < NUM_PIXELS; i++) {
-//         strip.setPixelColor(i, strip.Color(0, 255, 0));
-//         strip.show();
-//         delay(100);
-//     }
-
-//     Serial.println("Sending blue");
-
-//     for (int i = 0; i < NUM_PIXELS; i++) {
-//         strip.setPixelColor(i, strip.Color(0, 0, 255));
-//         strip.show();
-//         delay(100);
-//     }
-
-//     Serial.println("turning off");
-//     for (int i = 0; i < NUM_PIXELS; i++) {
-//         strip.setPixelColor(i, strip.Color(0, 0, 0));
-//         strip.show();
-//         delay(100);
-//     }
-// }
