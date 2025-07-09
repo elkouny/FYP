@@ -32,7 +32,7 @@ const int GRBL_TX = 7;
 #define SERVICE_UUID "0000180C-0000-1000-8000-00805F9B34FB"
 #define CHARACTERISTIC_UUID "00002A56-0000-1000-8000-00805F9B34FB"
 // State
-bool deviceConnected = true;
+bool deviceConnected = false;
 BLECharacteristic *statusChar = nullptr;
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 Adafruit_NeoPixel strip(NUM_PIXELS, DATA_PIN, NEO_GRB + NEO_KHZ800);
@@ -42,7 +42,22 @@ bool gameReady = false;
 bool hasNotifiedReady = false;
 bool gameStarted = false;
 BiMap<std::string, XYPos> boardState; // byte to chess id
-std::set<std::string> hovering;
+std::string hovering;
+// White Pieces
+std::set<std::string> whitePawnUIDs = {"1D0BDB5D0D1080", "1D0CDB5D0D1080", "1D0DDB5D0D1080", "1D0EDB5D0D1080", "1D9BDB5D0D1080", "1DA7DA5D0D1080", "1DA8DA5D0D1080", "1DAADA5D0D1080"};
+std::set<std::string> whiteRookUIDs = {"1DA0DA5D0D1080", "1DA6DA5D0D1080"};
+std::set<std::string> whiteKnightUIDs = {"1DA5DA5D0D1080", "1DA9DA5D0D1080"};
+std::set<std::string> whiteBishopUIDs = {"1DA1DA5D0D1080", "1DA4DA5D0D1080"};
+std::set<std::string> whiteKingUIDs = {"1DA2DA5D0D1080"};
+std::set<std::string> whiteQueenUIDs = {"1DA3DA5D0D1080"};
+// Black Pieces
+std::set<std::string> blackPawnUIDs = {"1D11DB5D0D1080", "1D12DB5D0D1080", "1D13DB5D0D1080", "1D14DB5D0D1080", "1D17DB5D0D1080", "1D19DB5D0D1080", "1D1ADB5D0D1080", "1D1EDB5D0D1080"};
+std::set<std::string> blackRookUIDs = {"1D0FDB5D0D1080", "1D1DDB5D0D1080"};
+std::set<std::string> blackKnightUIDs = {"1D10DB5D0D1080", "1D1CDB5D0D1080"};
+std::set<std::string> blackBishopUIDs = {"1D15DB5D0D1080", "1D16DB5D0D1080"};
+std::set<std::string> blackQueenUIDs = {"1D18DB5D0D1080"};
+std::set<std::string> blackKingUIDs = {"1D1BDB5D0D1080"};
+
 // FreeRTOS
 #define WRITE_QUEUE_LEN 10
 #define WRITE_MSG_LEN 64
@@ -140,7 +155,13 @@ void clearRegisters() {
 }
 
 std::string uidToString(const MFRC522::Uid &uid) {
-    return std::string(reinterpret_cast<const char *>(uid.uidByte), uid.size);
+    std::string uidStr = "";
+    for (byte i = 0; i < uid.size; i++) {
+        char hex[3];
+        sprintf(hex, "%02X", uid.uidByte[i]); // Format as two-digit hex
+        uidStr += hex;
+    }
+    return uidStr;
 }
 
 XYPos readerToXYPos(int readerIndex) {
@@ -155,17 +176,24 @@ int stringPosToIndex(const std::string &pos) {
     return rank * 8 + file;
 }
 
+std::string stringPosToGcode(const std::string &pos, int feedRate = 6000) {
+    int file = pos[0] - 'a';
+    int rank = pos[1] - '1';
+    return "G0 X" + std::to_string(file * 60 + 30) + " Y" + std::to_string(rank * 60 + 30) + " F" + std::to_string(feedRate);
+}
+
 void scanBoard() {
     for (int i = 0; i < numReaders; i++) {
         clearRegisters();
         activateReader(i);
+        delayMicroseconds(1000);
         mfrc522.PCD_Init();
         mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
         XYPos currentPos = readerToXYPos(i);
         String message;
 
         byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
-        while (!mfrc522.PCD_PerformSelfTest() || v == 0x00 || v == 0xFF) {
+        if (!mfrc522.PCD_PerformSelfTest() || v == 0x00 || v == 0xFF) {
             Serial.println("Error at " + currentPos.toString());
             clearRegisters();
             activateReader(i);
@@ -198,9 +226,9 @@ void scanBoard() {
                     Serial.println("Message sent" + message);
                 } else {
                     // nothing to do the piece was in the same position
-                    if (hovering.count(uid)) {
+                    if (hovering == uid) {
                         // if the piece was hovering mark as no longer hovering
-                        hovering.erase(uid);
+                        hovering = "";
                         statusChar->setValue("clear");
                         statusChar->notify();
                         Serial.println("Undoing hovering at " + currentPos.toString());
@@ -215,12 +243,12 @@ void scanBoard() {
                 Serial.println("Message sent " + message);
             }
         } else {
-            if (boardState.containsXYPos(currentPos) && !hovering.count(boardState.getFromXYPos(currentPos))) {
+            if (boardState.containsXYPos(currentPos) && hovering == "") {
                 // hover
                 message = "hover:" + currentPos.toString();
                 statusChar->setValue(message.c_str());
                 statusChar->notify();
-                hovering.insert(boardState.getFromXYPos(currentPos));
+                hovering = boardState.getFromXYPos(currentPos);
                 Serial.println(message);
             }
         }
@@ -228,6 +256,9 @@ void scanBoard() {
 }
 
 void resetBoard() {
+    myServo.write(0);
+    delay(50);
+    grbl.println("$H");
     gameReady = false;
     hasNotifiedReady = false;
     gameStarted = false;
@@ -238,84 +269,120 @@ void resetBoard() {
 }
 
 void initializeBoard() {
-    std::set<int> invalid;
-    Serial.println(" Waiting for all 32 pieces to be placed in valid positions");
+    std::set<int> invalidPlacementIndexes;
+    Serial.println("Waiting for all 32 pieces to be placed in their correct starting positions.");
+
+    // Light up all valid starting squares in green
     for (int i = 0; i < 16; i++) {
-        strip.setPixelColor(i, strip.Color(0, 255, 0));
-        strip.setPixelColor(63 - i, strip.Color(0, 255, 0));
+        strip.setPixelColor(i, strip.Color(0, 255, 0));      // Ranks 1 & 2
+        strip.setPixelColor(i + 48, strip.Color(0, 255, 0)); // Ranks 7 & 8
     }
     strip.show();
+
     while (true) {
-        for (int i = 0; i < numReaders; i++) {
-            clearRegisters();
-            activateReader(i);
-            mfrc522.PCD_Init();
-            mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
-            XYPos currentPos = readerToXYPos(i);
+        bool allPiecesCorrectlyPlaced = boardState.forward.size() == 32 && invalidPlacementIndexes.empty();
 
-            byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
-
-            if (!mfrc522.PCD_PerformSelfTest() || v == 0x00 || v == 0xFF) {
-                Serial.println("Retrying reader at " + currentPos.toString());
-                mfrc522.PCD_DumpVersionToSerial();
-                clearRegisters();
-                activateReader(i);
-                mfrc522.PCD_Init();
-                mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
-                v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
-            }
-
-            if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
-                if (currentPos.y == 1 || currentPos.y == 2 || currentPos.y == 7 || currentPos.y == 8) {
-                    std::string uid = uidToString(mfrc522.uid);
-                    if (!boardState.containsXYPos(currentPos) || boardState.getFromXYPos(currentPos) != uid) {
-                        boardState.insert(uid, currentPos);
-                        Serial.println("Piece placed at " + currentPos.toString());
-                        strip.setPixelColor(i, strip.Color(0, 0, 0));
-                        strip.show();
-                    }
-                } else {
-                    strip.setPixelColor(i, strip.Color(255, 0, 0));
-                    strip.show();
-                    Serial.println("Invalid piece at row " + String(currentPos.y) + " — only 1–2 or 7–8 allowed.");
-                    invalid.insert(i);
-                }
-            } else {
-                if (invalid.count(i)) {
-                    invalid.erase(i);
-                    strip.setPixelColor(i, strip.Color(0, 0, 0));
-                    strip.show();
-                }
-                if (boardState.containsXYPos(currentPos)) {
-                    boardState.eraseByXYPos(currentPos);
-                    strip.setPixelColor(i, strip.Color(0, 255, 0));
-                    strip.show();
-                }
-            }
-        }
-
-        Serial.print("Valid pieces placed: ");
-        Serial.print(boardState.forward.size());
-        Serial.println(" / 32");
-
-        if (boardState.forward.size() == 32) {
+        if (allPiecesCorrectlyPlaced) {
             Serial.println("Initial board setup complete and valid!");
             gameReady = true;
             float maxDist = sqrt(CENTER_X * CENTER_X + CENTER_Y * CENTER_Y);
             for (int cycle = 0; cycle < 2; cycle++) {
                 waveRadius = 0.0;
-                while (waveRadius <= maxDist) {
+                while (waveRadius <= maxDist + widthBand) {
                     drawRadiatingWaveFrame();
                     delay(10);
                 }
-                strip.clear();
+            }
+            strip.clear();
+            strip.show();
+            break; // Exit the while loop
+        }
+
+        // Scan each square on the board
+        for (int i = 0; i < numReaders; i++) {
+            clearRegisters();
+            activateReader(i);
+            delayMicroseconds(1000);
+
+            mfrc522.PCD_Init();
+
+            XYPos currentPos = readerToXYPos(i);
+
+            // Check if a piece is present on the current square
+            if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+                std::string uid = uidToString(mfrc522.uid);
+                bool isPositionValidForPiece = false;
+
+                // --- Validate piece type against its position using the UID sets ---
+                int x = int(currentPos.x) - 1; // 0-7
+                int y = currentPos.y - 1;      // 0-7
+
+                // White Pawns (Rank 2)
+                if (y == 1 && whitePawnUIDs.count(uid)) isPositionValidForPiece = true;
+                // White Back Rank (Rank 1)
+                else if (y == 0) {
+                    if ((x == 0 || x == 7) && whiteRookUIDs.count(uid)) isPositionValidForPiece = true;
+                    if ((x == 1 || x == 6) && whiteKnightUIDs.count(uid)) isPositionValidForPiece = true;
+                    if ((x == 2 || x == 5) && whiteBishopUIDs.count(uid)) isPositionValidForPiece = true;
+                    if (x == 3 && whiteQueenUIDs.count(uid)) isPositionValidForPiece = true;
+                    if (x == 4 && whiteKingUIDs.count(uid)) isPositionValidForPiece = true;
+                }
+                // Black Pawns (Rank 7)
+                else if (y == 6 && blackPawnUIDs.count(uid))
+                    isPositionValidForPiece = true;
+                // Black Back Rank (Rank 8)
+                else if (y == 7) {
+                    if ((x == 0 || x == 7) && blackRookUIDs.count(uid)) isPositionValidForPiece = true;
+                    if ((x == 1 || x == 6) && blackKnightUIDs.count(uid)) isPositionValidForPiece = true;
+                    if ((x == 2 || x == 5) && blackBishopUIDs.count(uid)) isPositionValidForPiece = true;
+                    if (x == 3 && blackQueenUIDs.count(uid)) isPositionValidForPiece = true;
+                    if (x == 4 && blackKingUIDs.count(uid)) isPositionValidForPiece = true;
+                }
+
+                // --- Update board state based on validation ---
+                if (isPositionValidForPiece) {
+                    if (!boardState.containsXYPos(currentPos)) {
+                        boardState.insert(uid, currentPos);
+                        Serial.println(("Correct piece placed at " + currentPos.toString()).c_str());
+                        strip.setPixelColor(i, strip.Color(0, 0, 0)); // Turn off light for correctly placed piece
+                        strip.show();
+                        invalidPlacementIndexes.erase(i);
+                    }
+                } else {
+                    // Invalid placement: either wrong piece type for the square or not a starting square
+                    if (!invalidPlacementIndexes.count(i)) {
+                        strip.setPixelColor(i, strip.Color(255, 0, 0)); // Red for error
+                        strip.show();
+                        Serial.println(("Invalid piece or position at " + currentPos.toString() + ". Please place the correct piece.").c_str());
+                        invalidPlacementIndexes.insert(i);
+                    }
+                }
+                mfrc522.PICC_HaltA();
+            } else { // No card detected on this square
+                bool isStartingSquare = (currentPos.y <= 2 || currentPos.y >= 7);
+
+                // If a piece was previously here, remove it from the board state
+                if (boardState.containsXYPos(currentPos)) {
+                    Serial.println(("Piece removed from " + boardState.getFromXYPos(currentPos)).c_str());
+                    boardState.eraseByXYPos(currentPos);
+                }
+
+                // If the square was marked as invalid, clear the red light
+                if (invalidPlacementIndexes.count(i)) {
+                    invalidPlacementIndexes.erase(i);
+                }
+
+                // If it's a starting square that is now empty, turn its light back to green
+                if (isStartingSquare) {
+                    strip.setPixelColor(i, strip.Color(0, 255, 0));
+                } else {
+                    strip.setPixelColor(i, strip.Color(0, 0, 0)); // Ensure non-starting squares are off
+                }
                 strip.show();
             }
-            break;
         }
     }
 }
-
 // === BLE Callbacks ===
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer *pServer) override {
@@ -340,13 +407,75 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
                 Serial.println("Game start confirmed by app!");
                 gameStarted = true;
 
+            } else if (value.rfind("clear_piece", 0) == 0) {
+                std::string lights = value.substr(9);
+                for (int i = 0; i < lights.size(); i += 2) {
+                    int index = stringPosToIndex(lights.substr(i, 2));
+                    if (boardState.containsXYPos(readerToXYPos(index))) {
+                        strip.setPixelColor(index, strip.Color(0, 0, 255));
+                        strip.show();
+                    }
+                }
+            }
+
+            else if (value.rfind("move_cnc:", 0) == 0) {
+                myServo.write(0);
+                delay(150);
+                std::string from = value.substr(9, 2);
+                std::string to = value.substr(11, 2);
+                grbl.println(stringPosToGcode(from, 120000).c_str());
+                delay(50);
+                Serial.println("Moving to 'from' position: " + String(from.c_str()));
+
+                // Wait for the 'from' move to complete
+                while (true) {
+                    grbl.println("?"); // Ask GRBL for its status
+
+                    // Check if there's a response from GRBL
+                    if (grbl.available()) {
+                        String resp = grbl.readStringUntil('\n');
+                        Serial.println("GRBL Status: " + resp);
+
+                        // Correctly check if the response contains "Idle"
+                        if (resp.indexOf("Idle") > 0) {
+                            delay(1500);
+                            Serial.println("Arrived at 'from' position. Engaging magnet.");
+                            myServo.write(120); // Engage magnet←
+                            delay(250);
+                            break; // Exit this loop and proceed to the next move
+                        }
+                    }
+                }
+
+                // --- Move to the 'to' position ---
+                grbl.println(stringPosToGcode(to, 2000).c_str());
+                delay(50);
+                Serial.println("Moving to 'to' position: " + String(to.c_str()));
+
+                // Wait for the 'to' move to complete
+                while (true) {
+                    grbl.println("?"); // Ask GRBL for its status
+                    if (grbl.available()) {
+                        String resp = grbl.readStringUntil('\n');
+                        Serial.println("GRBL Status: " + resp);
+
+                        // Correctly check if the response contains "Idle"
+                        if (resp.indexOf("Idle") > 0) {
+                            delay(1500);
+                            myServo.write(0); // Disengage magnet
+                            delay(150);
+                            Serial.println("Arrived at 'to' position. Disengaging magnet.");
+                            break; // Exit this loop, the full move is complete
+                        }
+                    }
+                }
             } else if (value.rfind("move_ack:", 0) == 0) {
                 std::string from = value.substr(9, 2);
                 std::string to = value.substr(11, 2);
                 std::string uid = boardState.getFromXYPos(XYPos(from));
                 boardState.eraseByXYPos(from);
                 boardState.insert(uid, XYPos(to));
-                hovering.erase(uid);
+                hovering = "";
 
             } else if (value.rfind("capture_ack:", 0) == 0) {
                 std::string move = value.substr(12);
@@ -355,7 +484,7 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
                 std::string uid_captured = boardState.getFromXYPos(XYPos(to));
                 std::string uid = boardState.getFromXYPos(XYPos(from));
                 boardState.eraseByUid(uid_captured);
-                hovering.erase(uid);
+                hovering = "";
                 boardState.eraseByXYPos(from);
                 boardState.insert(uid, XYPos(to));
                 Serial.println(("Capture ACK processed: " + from + " -> " + to).c_str());
@@ -368,9 +497,9 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
 
             } else if (value.rfind("light_on", 0) == 0) {
                 Serial.println(value.c_str());
-                std::string ackMessage = "ack:" + value;
-                statusChar->setValue(ackMessage.c_str());
-                statusChar->notify();
+                // std::string ackMessage = "ack:" + value;
+                // statusChar->setValue(ackMessage.c_str());
+                // statusChar->notify();
                 std::string lights = value.substr(9);
                 for (int i = 0; i < lights.size(); i += 2) {
                     int index = stringPosToIndex(lights.substr(i, 2));
@@ -383,9 +512,9 @@ class StatusCharCallback : public BLECharacteristicCallbacks {
 
             } else if (value == "light_off") {
                 Serial.println(value.c_str());
-                std::string ackMessage = "ack:" + value;
-                statusChar->setValue(ackMessage.c_str());
-                statusChar->notify();
+                // std::string ackMessage = "ack:" + value;
+                // statusChar->setValue(ackMessage.c_str());
+                // statusChar->notify();
                 strip.clear();
                 strip.show();
             } else if (value.rfind("in_check", 0) == 0) {
@@ -402,6 +531,7 @@ void setup() {
     SPI.begin();
     strip.begin();
     strip.show();
+    myServo.write(0);
 
     pinMode(CLK, OUTPUT);
     pinMode(SER, OUTPUT);
@@ -449,19 +579,16 @@ void setup() {
 }
 
 void loop() {
-    if (grbl.available()) {
-        String resp = grbl.readStringUntil('\n');
-        resp.trim();
-        if (resp.length()) {
-            Serial.printf("← GRBL: %s\n", resp.c_str());
-        }
-    }
     if (!deviceConnected) return;
     if (!gameReady) {
         initializeBoard();
     }
 
     if (gameReady && !hasNotifiedReady) {
+        myServo.write(0);
+        delay(50);
+        grbl.println("$X");
+        grbl.println("$H");
         delay(2000);
         statusChar->setValue("ready_to_start");
         statusChar->notify();
