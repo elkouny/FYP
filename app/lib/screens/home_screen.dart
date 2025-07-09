@@ -1,6 +1,11 @@
+// Flutter/Dart Imports
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+// External Package Imports
 import 'package:flutter_appauth/flutter_appauth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// Project-specific Imports
 import 'package:smart_chess_app/services/lichess_service.dart';
 import 'package:smart_chess_app/widgets/BotOptionsWidget.dart';
 import '../services/ble_manager.dart';
@@ -13,20 +18,30 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  //============================================================================
+  // Properties & Constants
+  //============================================================================
+
   final BLEManager _bleManager = BLEManager();
   final FlutterAppAuth _appAuth = const FlutterAppAuth();
 
+  // State variables
   bool _isLoggedIn = false;
   String _statusMessage = "🔍 Scanning for SmartChessBoard...";
   bool _readyToStart = false;
   Duration _baseTime = const Duration(minutes: 10);
   Duration _increment = Duration.zero;
 
+  // Lichess OAuth constants
   static const _lichessClientId = 'YOUR_CLIENT_ID';
   static const _redirectUrl = 'com.yourapp://oauthredirect';
   static const _authorizationEndpoint = 'https://lichess.org/oauth';
   static const _tokenEndpoint = 'https://lichess.org/api/token';
   static const _scopes = <String>['board:play'];
+
+  //============================================================================
+  // Lifecycle Methods
+  //============================================================================
 
   @override
   void initState() {
@@ -35,88 +50,99 @@ class _HomeScreenState extends State<HomeScreen> {
     _setupBle();
   }
 
-  Future<void> _checkLogin() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('lichess_token');
-    setState(() => _isLoggedIn = token != null);
+  @override
+  void dispose() {
+    super.dispose();
   }
 
-  Future<void> _doLogin() async {
-    try {
-      final result = await _appAuth.authorizeAndExchangeCode(
-        AuthorizationTokenRequest(
-          _lichessClientId,
-          _redirectUrl,
-          serviceConfiguration: AuthorizationServiceConfiguration(
-            authorizationEndpoint: _authorizationEndpoint,
-            tokenEndpoint: _tokenEndpoint,
+  //============================================================================
+  // Build Method
+  //============================================================================
+
+  @override
+  Widget build(BuildContext context) {
+    // If not logged in yet, show only the login button
+    if (!_isLoggedIn) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Welcome')),
+        body: Center(
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.login),
+            label: const Text('Login with Lichess'),
+            onPressed: _doLogin,
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
           ),
-          scopes: _scopes,
         ),
       );
-      if (result?.accessToken != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('lichess_token', result!.accessToken!);
-        setState(() => _isLoggedIn = true);
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
     }
-  }
 
-  void _setupBle() {
-    _bleManager.startScanAndConnect();
-    _bleManager.statusStream.listen((msg) {
-      final d = msg.trim().toLowerCase();
-      String parsed;
-      switch (d) {
-        case 'waiting':
-          parsed = '🧩 Waiting for pieces...';
-          break;
-        case 'connected':
-          parsed = '📶 Connected. Waiting for board setup...';
-          break;
-        case 'ready_to_start':
-          parsed = '✅ All pieces placed';
-          setState(() => _readyToStart = true);
-          break;
-        default:
-          parsed = 'ℹ️ Status: $d';
-      }
-      if (mounted) {
-        setState(() => _statusMessage = parsed);
-      }
-    });
-  }
-
-  Future<void> _startGame() async {
-    if (_bleManager.gameStatusChar == null) return;
-    setState(() {
-      _statusMessage = '⏳ Starting game...';
-      _readyToStart = false;
-    });
-    await _bleManager.writeCharacteristic('start_confirmed');
-    setState(() => _statusMessage = '🚀 Game started!');
-    if (mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder:
-              (_) => ChessBoard(
-                key: UniqueKey(),
-                bleManager: _bleManager,
-                whitePlayerName: 'Ismail',
-                blackPlayerName: 'Kouny',
-                whitePlayerRating: 500,
-                blackPlayerRating: 1200,
-                playAgainstBot: false,
+    return Scaffold(
+      backgroundColor: const Color(0xFF1E1E1E),
+      body: SafeArea(
+        child: Column(
+          children: [
+            const SizedBox(height: 20),
+            const Text(
+              "Play",
+              style: TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
               ),
+            ),
+            const SizedBox(height: 40),
+            ElevatedButton.icon(
+              onPressed: () => _showTimeSelector(context),
+              icon: const Icon(Icons.timer),
+              label: Text(
+                _increment.inSeconds > 0
+                    ? '${_baseTime.inMinutes} | ${_increment.inSeconds}'
+                    : '${_baseTime.inMinutes} min',
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey[800],
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                foregroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildMenuButton("Start an online game", Icons.play_arrow, () {
+              // TODO: add navigation logic
+            }),
+            _buildMenuButton("Play a Friend online", Icons.group, () {
+              // TODO: add navigation logic
+            }),
+            _buildMenuButton("Play a Bot", Icons.smart_toy, () {
+              _showBotOptions(context);
+            }),
+            _buildMenuButton(
+              "Play Locally on the Board",
+              Icons.sports_esports,
+              _startLocalGame,
+            ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 20.0),
+              child: Text(
+                _statusMessage,
+                style: const TextStyle(color: Colors.grey, fontSize: 18),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
         ),
-      );
-    }
+      ),
+    );
   }
+
+  //============================================================================
+  // Widget Builders & UI Handlers
+  //============================================================================
 
   Widget _buildMenuButton(String label, IconData icon, VoidCallback onPressed) {
     final isEnabled = _readyToStart;
@@ -217,11 +243,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(color: Colors.white, fontSize: 18),
                 ),
                 const SizedBox(height: 16),
-                _buildTimeRow("Bullet", [
-                  [1, 0],
-                  [1, 1],
-                  [2, 1],
-                ]),
                 _buildTimeRow("Blitz", [
                   [3, 0],
                   [3, 2],
@@ -229,23 +250,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 ]),
                 _buildTimeRow("Rapid", [
                   [10, 0],
+                  [10, 5],
                   [15, 10],
+                ]),
+                _buildTimeRow("Classical", [
                   [30, 0],
+                  [30, 20],
                 ]),
               ],
             ),
           ),
     );
-  }
-
-  String determineCategory(Duration base, Duration increment) {
-    final adjustedSeconds = base.inSeconds + 40 * increment.inSeconds;
-
-    if (adjustedSeconds <= 15) return 'ultraBullet';
-    if (adjustedSeconds < 180) return 'bullet';
-    if (adjustedSeconds < 480) return 'blitz';
-    if (adjustedSeconds < 1500) return 'rapid';
-    return 'classical';
   }
 
   Future<void> _showBotOptions(BuildContext context) async {
@@ -261,6 +276,42 @@ class _HomeScreenState extends State<HomeScreen> {
     print('Bot settings: $settings');
     if (settings == null) return;
     _startBotGame(settings);
+  }
+
+  //============================================================================
+  // Game Start Logic
+  //============================================================================
+
+  Future<void> _startLocalGame() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('lichess_token');
+
+    if (_bleManager.gameStatusChar == null) return;
+    setState(() {
+      _statusMessage = '⏳ Starting game...';
+      _readyToStart = false;
+    });
+    await _bleManager.writeCharacteristic('start_confirmed');
+    setState(() => _statusMessage = '🚀 Game started!');
+    if (mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => ChessBoard(
+                key: UniqueKey(),
+                bleManager: _bleManager,
+                baseTime: _baseTime,
+                increment: _increment,
+                whitePlayerName: 'Ismail',
+                blackPlayerName: 'Kouny',
+                whitePlayerRating: 500,
+                blackPlayerRating: 1200,
+                lichessToken: token,
+              ),
+        ),
+      );
+    }
   }
 
   Future<void> _startBotGame(BotSettings settings) async {
@@ -323,10 +374,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   (_) => ChessBoard(
                     key: UniqueKey(),
                     bleManager: _bleManager,
-                    playAgainstBot: true,
                     lichessGameId: gameId,
                     userColor: userColor,
                     lichessToken: token,
+                    baseTime: _baseTime,
+                    increment: _increment,
                     whitePlayerName:
                         userColor == 'black' ? opponentUsername : userName,
                     blackPlayerName:
@@ -344,98 +396,77 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // If not logged in yet, show only the login button
-    if (!_isLoggedIn) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Welcome')),
-        body: Center(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.login),
-            label: const Text('Login with Lichess'),
-            onPressed: _doLogin,
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-          ),
-        ),
-      );
-    }
+  //============================================================================
+  // Service & Initialization Logic
+  //============================================================================
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF1E1E1E),
-      body: SafeArea(
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            const Text(
-              "Play",
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 40),
-            ElevatedButton.icon(
-              onPressed: () => _showTimeSelector(context),
-              icon: const Icon(Icons.timer),
-              label: Text(
-                _increment.inSeconds > 0
-                    ? '${_baseTime.inMinutes} | ${_increment.inSeconds}'
-                    : '${_baseTime.inMinutes} min',
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey[800],
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 12,
-                ),
-                foregroundColor: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            _buildMenuButton(
-              "Start an online game",
-              Icons.play_arrow,
-              _startGame,
-            ),
-
-            _buildMenuButton("Play a Friend online", Icons.group, () {
-              // TODO: add navigation logic
-            }),
-            _buildMenuButton("Play a Bot", Icons.smart_toy, () {
-              _showBotOptions(context);
-              // TODO: add navigation logic
-            }),
-            _buildMenuButton(
-              "Play Locally on the Board",
-              Icons.sports_esports,
-              () {
-                // TODO: add local play logic
-              },
-            ),
-
-            const Spacer(),
-
-            Padding(
-              padding: const EdgeInsets.only(bottom: 20.0),
-              child: Text(
-                _statusMessage,
-                style: const TextStyle(color: Colors.grey, fontSize: 18),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _checkLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('lichess_token');
+    setState(() => _isLoggedIn = token != null);
   }
 
-  @override
-  void dispose() {
-    super.dispose();
+  Future<void> _doLogin() async {
+    try {
+      final result = await _appAuth.authorizeAndExchangeCode(
+        AuthorizationTokenRequest(
+          _lichessClientId,
+          _redirectUrl,
+          serviceConfiguration: AuthorizationServiceConfiguration(
+            authorizationEndpoint: _authorizationEndpoint,
+            tokenEndpoint: _tokenEndpoint,
+          ),
+          scopes: _scopes,
+        ),
+      );
+      if (result?.accessToken != null) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('lichess_token', result!.accessToken!);
+        setState(() => _isLoggedIn = true);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
+    }
+  }
+
+  void _setupBle() {
+    _bleManager.startScanAndConnect();
+    _bleManager.statusStream.listen((msg) {
+      final d = msg.trim().toLowerCase();
+      String parsed;
+      switch (d) {
+        case 'waiting':
+          parsed = '🧩 Waiting for pieces...';
+          break;
+        case 'connected':
+          parsed = '📶 Connected. Waiting for board setup...';
+          break;
+        case 'ready_to_start':
+          parsed = '✅ All pieces placed';
+          setState(() => _readyToStart = true);
+          break;
+        default:
+          parsed = 'ℹ️ Status: $d';
+      }
+      if (mounted) {
+        setState(() => _statusMessage = parsed);
+      }
+    });
+  }
+
+  //============================================================================
+  // Utility Functions
+  //============================================================================
+
+  String determineCategory(Duration base, Duration increment) {
+    final adjustedSeconds = base.inSeconds + 40 * increment.inSeconds;
+
+    if (adjustedSeconds <= 15) return 'ultraBullet';
+    if (adjustedSeconds < 180) return 'bullet';
+    if (adjustedSeconds < 480) return 'blitz';
+    if (adjustedSeconds < 1500) return 'rapid';
+    return 'classical';
   }
 }

@@ -23,6 +23,7 @@ class BLEManager {
   StreamSubscription? _scanSub;
   StreamSubscription? _connectionSub;
   StreamSubscription? _charSub;
+  String? lastMessage;
 
   /// Helper to safely add messages if the stream is still open.
   void _addStatus(String status) {
@@ -90,10 +91,33 @@ class BLEManager {
   /// Write a message to the gameStatus characteristic.
   Future<void> writeCharacteristic(String message) async {
     if (gameStatusChar != null && gameStatusChar!.properties.write) {
+      lastMessage = message;
       await gameStatusChar!.write(
         utf8.encode(message),
         withoutResponse: gameStatusChar!.properties.writeWithoutResponse,
       );
+
+      // if (message.startsWith("light_on") || message == "light_off") {
+      //   final completer = Completer<void>();
+      //   StreamSubscription? sub;
+
+      //   sub = statusStream.listen((response) {
+      //     if (response == "ack:$message") {
+      //       completer.complete();
+      //       sub?.cancel();
+      //     }
+      //   });
+
+      //   // Timeout after 2s
+      //   Future.delayed(Duration(seconds: 2), () {
+      //     if (!completer.isCompleted) {
+      //       completer.completeError("Light command not acknowledged: $message");
+      //       sub?.cancel();
+      //     }
+      //   });
+
+      //   return completer.future;
+      // }
     }
   }
 

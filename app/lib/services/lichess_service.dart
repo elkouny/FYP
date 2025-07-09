@@ -61,6 +61,38 @@ class LichessService {
     return 0;
   }
 
+  Future<bool> resignGame(String gameId, String token) async {
+    final response = await http.post(
+      Uri.parse('https://lichess.org/api/board/game/$gameId/resign'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 200) {
+      return true; // Resignation successful
+    } else {
+      throw false;
+    }
+  }
+
+  Future<bool> uploadGame(String pgn, String token) async {
+    final response = await http.post(
+      Uri.parse('https://lichess.org/api/import'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: {'pgn': pgn},
+    );
+
+    if (response.statusCode == 200) {
+      print("✅ Game uploaded successfully.");
+      return true;
+    } else {
+      print("❌ Failed to upload game. Status: ${response.statusCode}");
+      print("Response: ${response.body}");
+      return false;
+    }
+  }
+
   /// Streams incoming events from the user's Lichess account (gameStart, challenge, etc.)
   Stream<Map<String, dynamic>> streamLichessEvents(String token) async* {
     final request = http.Request(
